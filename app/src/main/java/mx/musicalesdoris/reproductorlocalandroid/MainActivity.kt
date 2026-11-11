@@ -1,5 +1,7 @@
 package mx.musicalesdoris.reproductorlocalandroid
 
+import mx.musicalesdoris.reproductorlocalandroid.library.LibraryScreen
+
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -94,7 +96,7 @@ private fun AppScreen(player: PlayerViewModel, themes: ThemeViewModel, theme: Pl
         )) {
             when (tab) {
                 0 -> PlayerScreen(theme, selected, state, player, importAudio)
-                1 -> LibraryScreen(theme, songs, state.selectedId, player, importAudio)
+                1 -> LibraryScreen(theme, songs, state, player, themes, importAudio)
                 else -> ThemesScreen(theme, selectedId, themes)
             }
         }
@@ -188,77 +190,6 @@ private fun PlayerScreen(theme: PlayerTheme, song: Song?, state: PlayerState, pl
 private fun Control(label: String, description: String, enabled: Boolean, color: Color, onClick: () -> Unit) {
     Text(label, modifier = Modifier.size(55.dp).clickable(enabled = enabled, onClick = onClick)
         .wrapContentSize(), color = if (enabled) color else color.copy(alpha = .4f), fontSize = 24.sp)
-}
-
-@Composable
-private fun LibraryScreen(theme: PlayerTheme, songs: List<Song>, selectedId: String?, player: PlayerViewModel, importAudio: () -> Unit) {
-    var query by remember { mutableStateOf("") }
-    Column(Modifier.fillMaxSize().padding(horizontal = 20.dp)) {
-        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-            Text("Biblioteca", Modifier.weight(1f), color = Color.White, fontSize = 30.sp, fontWeight = FontWeight.Bold)
-            TextButton(onClick = importAudio) { Text("+", color = theme.accent, fontSize = 30.sp) }
-        }
-        if (songs.isEmpty()) {
-            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    Text("♫", color = theme.accent, fontSize = 54.sp)
-                    Text("Tu biblioteca está vacía", color = Color.White, fontSize = 21.sp)
-                    Text("Importa archivos de audio para empezar a escuchar.", color = Color.White.copy(alpha = .65f))
-                }
-            }
-        } else {
-            OutlinedTextField(query, { query = it }, label = { Text("Buscar canciones") }, singleLine = true,
-                modifier = Modifier.fillMaxWidth(), colors = OutlinedTextFieldDefaults.colors(
-                    focusedTextColor = Color.White, unfocusedTextColor = Color.White, focusedBorderColor = theme.accent,
-                    focusedLabelColor = theme.accent, unfocusedLabelColor = Color.White.copy(alpha = .65f)))
-            Spacer(Modifier.height(12.dp))
-            val visible = songs.filter { it.title.contains(query, ignoreCase = true) }
-            if (visible.isEmpty()) Text("No se encontraron canciones", color = Color.White.copy(alpha = .7f))
-            LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                items(visible, key = { it.id }) { song ->
-                    Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp)).background(Color.White.copy(alpha = .08f))
-                        .padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
-                        Row(Modifier.weight(1f).clickable { player.select(song) }, verticalAlignment = Alignment.CenterVertically) {
-                            Text(if (song.id == selectedId) "≋" else "♫", color = theme.accent, fontSize = 23.sp)
-                            Spacer(Modifier.width(12.dp))
-                            Column {
-                                Text(song.title, color = Color.White, fontWeight = FontWeight.SemiBold,
-                                    maxLines = 1, overflow = TextOverflow.Ellipsis)
-                                Text(if (song.id == selectedId) "Seleccionada" else "Archivo local",
-                                    color = Color.White.copy(alpha = .65f), fontSize = 12.sp)
-                            }
-                        }
-                        TextButton(onClick = { player.library.toggleFavorite(song.id) }) {
-                            Text(if (song.favorite) "♥" else "♡", color = theme.accent, fontSize = 24.sp)
-                        }
-                        TextButton(onClick = { player.delete(song) }) { Text("×", color = Color(0xFFFF817A), fontSize = 24.sp) }
-                    }
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun ThemesScreen(theme: PlayerTheme, selectedId: String, themes: ThemeViewModel) {
-    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(20.dp)) {
-        Text("Temas", color = Color.White, fontSize = 30.sp, fontWeight = FontWeight.Bold)
-        Spacer(Modifier.height(18.dp))
-        PlayerTheme.all.forEach { option ->
-            Row(Modifier.fillMaxWidth().padding(bottom = 18.dp).clip(RoundedCornerShape(22.dp))
-                .background(Color.White.copy(alpha = .08f))
-                .border(1.dp, if (selectedId == option.id) option.accent else Color.White.copy(alpha = .14f), RoundedCornerShape(22.dp))
-                .clickable { themes.select(option.id) }.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
-                Artwork(option, Modifier.size(80.dp))
-                Spacer(Modifier.width(16.dp))
-                Column(Modifier.weight(1f)) {
-                    Text(option.name, color = Color.White, fontWeight = FontWeight.SemiBold)
-                    Text(option.description, color = Color.White.copy(alpha = .65f), fontSize = 14.sp)
-                }
-                if (selectedId == option.id) Text("✓", color = option.accent, fontSize = 24.sp)
-            }
-        }
-    }
 }
 
 private fun formatTime(ms: Int): String {

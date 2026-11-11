@@ -1,0 +1,13 @@
+package mx.musicalesdoris.reproductorlocalandroid.library
+
+enum class LibrarySection(val title: String, val heading: String) {
+    SONGS("Canciones", "Tus canciones"),
+    FAVORITES("Favoritos", "Tus favoritos"),
+    PLAYLISTS("Listas", "Tus listas"),
+    ALBUMS("Álbumes", "Tus álbumes"),
+    ARTISTS("Artistas", "Tus artistas")
+}
+
+data class PlaylistSummary(val id: String, val title: String, val songCount: Int)
+data class AlbumSummary(val id: String, val title: String, val artist: String, val songCount: Int)
+data class ArtistSummary(val id: String, val name: String, val albumCount: Int)
