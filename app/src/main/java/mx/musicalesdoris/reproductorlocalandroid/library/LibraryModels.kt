@@ -9,5 +9,18 @@ enum class LibrarySection(val title: String, val heading: String) {
 }
 
 data class PlaylistSummary(val id: String, val title: String, val songCount: Int)
-data class AlbumSummary(val id: String, val title: String, val artist: String, val songCount: Int)
-data class ArtistSummary(val id: String, val name: String, val albumCount: Int)
+data class AlbumSummary(
+    val id: String,
+    val title: String,
+    val artist: String?,
+    val songCount: Int,
+    val artworkPath: String?,
+    val songIds: List<String>
+)
+data class ArtistSummary(
+    val id: String,
+    val name: String,
+    val albumCount: Int,
+    val songCount: Int,
+    val songIds: List<String>
+)

@@ -1,6 +1,7 @@
 package mx.musicalesdoris.reproductorlocalandroid
 
 import mx.musicalesdoris.reproductorlocalandroid.library.LibraryScreen
+import mx.musicalesdoris.reproductorlocalandroid.library.components.artwork.LocalArtwork
 
 import android.os.Bundle
 import androidx.activity.ComponentActivity
@@ -61,15 +62,42 @@ private fun AppScreen(player: PlayerViewModel, themes: ThemeViewModel, theme: Pl
     val songs by player.library.songs.collectAsState()
     val state by player.state.collectAsState()
     val libraryError by player.library.error.collectAsState()
+    val catalogNeedsRecovery by player.library.catalogNeedsRecovery.collectAsState()
+    val recoveryMessage by player.library.recoveryMessage.collectAsState()
     val selectedId by themes.selectedId.collectAsState()
     var tab by remember { mutableIntStateOf(0) }
+    var recoveryPromptDismissed by remember { mutableStateOf(false) }
     val selected = songs.firstOrNull { it.id == state.selectedId }
-    val error = state.error ?: libraryError
+    val error = if (catalogNeedsRecovery) {
+        libraryError ?: state.error
+    } else {
+        state.error ?: libraryError ?: recoveryMessage
+    }
 
-    if (error != null) AlertDialog(
-        onDismissRequest = player::clearError,
-        title = { Text("Error") }, text = { Text(error) },
-        confirmButton = { TextButton(onClick = player::clearError) { Text("Aceptar") } }
+    LaunchedEffect(error) { recoveryPromptDismissed = false }
+
+    if (error != null && (!catalogNeedsRecovery || !recoveryPromptDismissed)) AlertDialog(
+        onDismissRequest = {
+            if (catalogNeedsRecovery) recoveryPromptDismissed = true else player.clearError()
+        },
+        title = {
+            Text(when {
+                catalogNeedsRecovery -> "Catálogo ilegible"
+                error == recoveryMessage -> "Recuperación completada"
+                else -> "Error"
+            })
+        },
+        text = { Text(error) },
+        confirmButton = {
+            if (catalogNeedsRecovery) {
+                TextButton(onClick = player::recoverCatalog) { Text("Respaldar y reconstruir") }
+            } else {
+                TextButton(onClick = player::clearError) { Text("Aceptar") }
+            }
+        },
+        dismissButton = if (catalogNeedsRecovery) {
+            { TextButton(onClick = { recoveryPromptDismissed = true }) { Text("Cerrar") } }
+        } else null
     )
 
     Scaffold(
@@ -131,19 +159,39 @@ private fun PlayerScreen(theme: PlayerTheme, song: Song?, state: PlayerState, pl
             Text("≋", fontSize = 26.sp, color = Color.White, modifier = Modifier.width(44.dp))
             Text("Reproduciendo", Modifier.weight(1f), color = Color.White,
                 fontSize = 18.sp, fontWeight = FontWeight.Medium, textAlign = androidx.compose.ui.text.style.TextAlign.Center)
-            TextButton(onClick = importAudio, modifier = Modifier.width(44.dp), contentPadding = PaddingValues(0.dp)) {
-                Text("+", fontSize = 30.sp, color = Color.White)
+            TextButton(onClick = importAudio, enabled = !state.isImporting,
+                modifier = Modifier.width(44.dp), contentPadding = PaddingValues(0.dp)) {
+                Text(if (state.isImporting) "…" else "+", fontSize = 30.sp, color = Color.White)
             }
         }
         Spacer(Modifier.height(28.dp))
-        Artwork(theme, Modifier.size(artworkSize).shadow(28.dp, RoundedCornerShape(theme.corner.dp)))
+        val artworkShape = RoundedCornerShape(theme.corner.dp)
+        LocalArtwork(
+            file = song?.let(player.library::artworkFileFor),
+            contentDescription = song?.let { "Portada de ${it.title}" } ?: "Portada de SONIQ",
+            modifier = Modifier.size(artworkSize)
+                .shadow(28.dp, artworkShape)
+                .background(Brush.linearGradient(listOf(theme.topGlow, theme.background, theme.bottomGlow)), artworkShape),
+            shape = artworkShape
+        ) { Artwork(theme, Modifier.fillMaxSize()) }
         Spacer(Modifier.height(28.dp))
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f)) {
                 Text(song?.title ?: "Sin canción", color = Color.White, fontSize = 29.sp,
                     fontWeight = FontWeight.Bold, maxLines = 2, overflow = TextOverflow.Ellipsis)
                 Spacer(Modifier.height(5.dp))
-                Text(if (song == null) "Importa una canción para empezar" else "Archivo local",
+                song?.let { currentSong ->
+                    val metadata = listOfNotNull(currentSong.artist ?: currentSong.albumArtist, currentSong.album)
+                        .joinToString(" · ")
+                    if (metadata.isNotEmpty()) Text(metadata, color = Color.White.copy(alpha = .82f),
+                        fontSize = 15.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                }
+                Text(when {
+                    song == null -> "Importa una canción para empezar"
+                    state.isPreparing -> "Preparando reproducción…"
+                    !state.selectedFileAvailable -> "Archivo no disponible"
+                    else -> "Archivo local"
+                },
                     color = Color.White.copy(alpha = .68f), fontSize = 17.sp)
             }
             Spacer(Modifier.width(8.dp))
@@ -156,7 +204,8 @@ private fun PlayerScreen(theme: PlayerTheme, song: Song?, state: PlayerState, pl
         Spacer(Modifier.height(28.dp))
         Slider(value = state.currentMs.toFloat().coerceIn(0f, state.durationMs.coerceAtLeast(1).toFloat()),
             onValueChange = { player.seek(it.toInt()) }, valueRange = 0f..state.durationMs.coerceAtLeast(1).toFloat(),
-            enabled = state.durationMs > 0, colors = SliderDefaults.colors(thumbColor = theme.accent, activeTrackColor = theme.accent))
+            enabled = state.durationMs > 0 && state.selectedFileAvailable && !state.isPreparing,
+            colors = SliderDefaults.colors(thumbColor = theme.accent, activeTrackColor = theme.accent))
         Row(Modifier.fillMaxWidth()) {
             Text(formatTime(state.currentMs), color = Color.White.copy(alpha = .7f), fontSize = 13.sp)
             Spacer(Modifier.weight(1f))
@@ -164,22 +213,25 @@ private fun PlayerScreen(theme: PlayerTheme, song: Song?, state: PlayerState, pl
         }
         Spacer(Modifier.height(24.dp))
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly, verticalAlignment = Alignment.CenterVertically) {
-            Control("↶15", "Retroceder 15 segundos", song != null, Color.White) { player.skip(-15_000) }
+            Control("↶15", "Retroceder 15 segundos", song != null && state.selectedFileAvailable && !state.isPreparing, Color.White) { player.skip(-15_000) }
             Box(Modifier.size(82.dp).clip(CircleShape).background(Brush.linearGradient(listOf(theme.accent, theme.secondaryAccent)))
-                .clickable(enabled = song != null, onClick = player::togglePlayback), contentAlignment = Alignment.Center) {
-                Text(if (state.isPlaying) "Ⅱ" else "▶", color = Color.White, fontSize = 32.sp)
+                .clickable(enabled = song != null && state.selectedFileAvailable && !state.isPreparing,
+                    onClick = player::togglePlayback), contentAlignment = Alignment.Center) {
+                Text(if (state.isPreparing) "…" else if (state.isPlaying) "Ⅱ" else "▶", color = Color.White, fontSize = 32.sp)
             }
-            Control("15↷", "Adelantar 15 segundos", song != null, Color.White) { player.skip(15_000) }
-            Control(if (state.repeat) "↻¹" else "↻", "Repetir canción", song != null,
+            Control("15↷", "Adelantar 15 segundos", song != null && state.selectedFileAvailable && !state.isPreparing, Color.White) { player.skip(15_000) }
+            Control(if (state.repeat) "↻¹" else "↻", "Repetir canción", song != null && state.selectedFileAvailable,
                 if (state.repeat) theme.accent else Color.White, player::toggleRepeat)
         }
         Spacer(Modifier.height(34.dp))
         Row(Modifier.fillMaxWidth().height(68.dp).clip(RoundedCornerShape(22.dp))
             .background(Color.White.copy(alpha = .09f)).border(1.dp, Color.White.copy(alpha = .12f), RoundedCornerShape(22.dp))
-            .clickable(onClick = importAudio).padding(horizontal = 20.dp), verticalAlignment = Alignment.CenterVertically) {
+            .clickable(enabled = !state.isImporting, onClick = importAudio)
+            .padding(horizontal = 20.dp), verticalAlignment = Alignment.CenterVertically) {
             Text("↓", color = Color.White, fontSize = 25.sp)
             Spacer(Modifier.width(14.dp))
-            Text("Importar canción", color = Color.White, fontSize = 17.sp, fontWeight = FontWeight.Medium)
+            Text(if (state.isImporting) "Importando canciones…" else "Importar canción",
+                color = Color.White, fontSize = 17.sp, fontWeight = FontWeight.Medium)
             Spacer(Modifier.weight(1f))
             Text("›", color = Color.White, fontSize = 26.sp)
         }

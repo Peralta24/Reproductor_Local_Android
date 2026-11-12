@@ -4,6 +4,7 @@ import mx.musicalesdoris.reproductorlocalandroid.*
 import mx.musicalesdoris.reproductorlocalandroid.library.*
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
@@ -14,15 +15,19 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import java.io.File
+import mx.musicalesdoris.reproductorlocalandroid.library.components.artwork.LocalArtwork
 
 @Composable
-fun AuroraAlbumCard(album: AlbumSummary, theme: PlayerTheme) {
-    Column(Modifier.background(Color.White.copy(alpha = .09f), RoundedCornerShape(24.dp)).padding(10.dp)) {
-        Box(Modifier.fillMaxWidth().height(100.dp).background(theme.background, RoundedCornerShape(24.dp)),
-            contentAlignment = Alignment.Center) { Text("◉", color = theme.accent, fontSize = 65.sp) }
+fun AuroraAlbumCard(album: AlbumSummary, artworkFile: File?, theme: PlayerTheme, onClick: () -> Unit) {
+    Column(Modifier.fillMaxWidth().background(Color.White.copy(alpha = .09f), RoundedCornerShape(24.dp))
+        .clickable(onClick = onClick).padding(10.dp)) {
+        LocalArtwork(artworkFile, "Portada de ${album.title}",
+            Modifier.fillMaxWidth().height(100.dp).background(theme.background, RoundedCornerShape(24.dp)),
+            RoundedCornerShape(24.dp)) { Text("◉", color = theme.accent, fontSize = 65.sp) }
         Spacer(Modifier.height(7.dp))
         Text(album.title, color = Color.White, fontWeight = FontWeight.SemiBold)
-        Text(album.artist, color = Color.White.copy(alpha = .65f))
+        album.artist?.let { Text(it, color = Color.White.copy(alpha = .65f)) }
         Text("${album.songCount} canciones", color = Color.White.copy(alpha = .65f), fontSize = 12.sp)
     }
 }

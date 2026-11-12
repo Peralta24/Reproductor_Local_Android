@@ -4,11 +4,12 @@ import mx.musicalesdoris.reproductorlocalandroid.*
 import mx.musicalesdoris.reproductorlocalandroid.library.*
 
 import androidx.compose.runtime.Composable
+import java.io.File
 
 @Composable
-fun AlbumCard(album: AlbumSummary, variantId: String, theme: PlayerTheme) {
+fun AlbumCard(album: AlbumSummary, artworkFile: File?, variantId: String, theme: PlayerTheme, onClick: () -> Unit) {
     when (variantId) {
-        "aurora" -> AuroraAlbumCard(album, theme)
-        else -> NeonAlbumCard(album, theme)
+        "aurora" -> AuroraAlbumCard(album, artworkFile, theme, onClick)
+        else -> NeonAlbumCard(album, artworkFile, theme, onClick)
     }
 }
