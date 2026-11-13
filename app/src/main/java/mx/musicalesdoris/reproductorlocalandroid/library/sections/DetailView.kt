@@ -79,9 +79,11 @@ fun DetailView(kind: String, key: String, state: PlayerState, player: PlayerView
             HeaderMenu(theme, theme.id == "soniq", onImport, onPlayer, onThemes, onProfile, onEqualizer)
         }
         if (theme.id == "soniq" && kind == "playlist" && members.isEmpty()) {
+            val playlistCover = playlist?.let(library::coverFor)
             Column(Modifier.fillMaxSize(), horizontalAlignment = Alignment.CenterHorizontally) {
                 Spacer(Modifier.weight(.7f))
-                PlaylistPlaceholderCover(140.dp)
+                if (playlistCover != null) ArtworkView(playlistCover, theme, 140.dp, playlist?.id.orEmpty())
+                else PlaylistPlaceholderCover(140.dp)
                 Spacer(Modifier.height(16.dp))
                 Text(title, color = SoniqPalette.ink, fontFamily = SoniqHeadingFont,
                     fontSize = 25.sp, fontWeight = FontWeight.Bold, textAlign = TextAlign.Center,
@@ -112,6 +114,7 @@ fun DetailView(kind: String, key: String, state: PlayerState, player: PlayerView
             }
             Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
                 if (kind == "album") SoniqCdCase(art, theme, 215.dp, key)
+                else if (kind == "playlist" && art == null) PlaylistPlaceholderCover(174.dp)
                 else ArtworkView(art, theme, 174.dp, key, circular = kind == "artist")
             }
             Spacer(Modifier.height(18.dp))

@@ -26,10 +26,10 @@ import kotlinx.coroutines.flow.asStateFlow
 
 data class PlayerState(
     val selectedId: String? = null, val isPlaying: Boolean = false,
-    val currentMs: Int = 0, val durationMs: Int = 0,
     val repeat: Boolean = false, val shuffle: Boolean = false,
     val queueIds: List<String>? = null, val volume: Float = .7f, val error: String? = null
 )
+data class PlaybackProgress(val currentMs: Int = 0, val durationMs: Int = 0)
 
 class PlaybackEngine private constructor(private val application: Application) {
     companion object {
@@ -43,6 +43,8 @@ class PlaybackEngine private constructor(private val application: Application) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val _state = MutableStateFlow(PlayerState())
     val state = _state.asStateFlow()
+    private val _progress = MutableStateFlow(PlaybackProgress())
+    val progress = _progress.asStateFlow()
     private val audioManager = application.getSystemService(AudioManager::class.java)
     private val notifications = application.getSystemService(NotificationManager::class.java)
     private val notificationId = 42
@@ -65,14 +67,15 @@ class PlaybackEngine private constructor(private val application: Application) {
     }
     private var mediaPlayer: MediaPlayer? = null
     private var hasStartedPlayback = false
+    private var currentArtwork: android.graphics.Bitmap? = null
+    private var artworkRequestKey: String? = null
     private val handler = Handler(Looper.getMainLooper())
     private val ticker = object : Runnable {
         override fun run() {
             mediaPlayer?.let { player ->
-                _state.value = _state.value.copy(currentMs = player.currentPosition,
-                    durationMs = player.duration.coerceAtLeast(0))
+                _progress.value = PlaybackProgress(player.currentPosition, player.duration.coerceAtLeast(0))
                 publishSession()
-                handler.postDelayed(this, 500)
+                handler.postDelayed(this, 1000)
             }
         }
     }
@@ -83,6 +86,12 @@ class PlaybackEngine private constructor(private val application: Application) {
         val saved = preferences.getString("selectedSongID", null)
         val initial = library.songs.value.firstOrNull { it.id == saved } ?: library.songs.value.firstOrNull()
         if (initial != null) select(initial, autoplay = false)
+        scope.launch {
+            library.songs.collect { songs ->
+                val selected = songs.firstOrNull { it.id == _state.value.selectedId }
+                if (selected != null) publishArtwork(selected)
+            }
+        }
     }
 
     fun selectedSong(songs: List<Song>): Song? = songs.firstOrNull { it.id == _state.value.selectedId }
@@ -104,10 +113,14 @@ class PlaybackEngine private constructor(private val application: Application) {
             }
             mediaPlayer = player
             preferences.edit().putString("selectedSongID", song.id).apply()
-            _state.value = _state.value.copy(selectedId = song.id, isPlaying = false, currentMs = 0,
-                durationMs = player.duration.coerceAtLeast(0), queueIds = if (preserveQueue) _state.value.queueIds else null,
+            _state.value = _state.value.copy(selectedId = song.id, isPlaying = false,
+                queueIds = if (preserveQueue) _state.value.queueIds else null,
                 error = null)
+            _progress.value = PlaybackProgress(0, player.duration.coerceAtLeast(0))
+            currentArtwork = null
+            artworkRequestKey = null
             publishSession(true)
+            publishArtwork(song)
             handler.post(ticker)
             if (autoplay) play()
         } catch (exception: Exception) {
@@ -130,7 +143,7 @@ class PlaybackEngine private constructor(private val application: Application) {
         if (next != null) select(next, preserveQueue = true)
     }
     fun previousSong() {
-        if (_state.value.currentMs > 3000) { seek(0); return }
+        if (_progress.value.currentMs > 3000) { seek(0); return }
         val queue = queueSongs()
         val index = queue.indexOfFirst { it.id == _state.value.selectedId }
         if (index > 0) select(queue[index - 1], preserveQueue = true) else seek(0)
@@ -138,6 +151,11 @@ class PlaybackEngine private constructor(private val application: Application) {
     fun togglePlayback() { if (_state.value.isPlaying) pause() else play() }
     fun play() {
         try {
+            if (mediaPlayer == null) {
+                val selected = library.songs.value.firstOrNull { it.id == _state.value.selectedId } ?: return
+                select(selected, autoplay = true, preserveQueue = true)
+                return
+            }
             mediaPlayer?.let {
                 if (audioManager.requestAudioFocus(focusRequest) != AudioManager.AUDIOFOCUS_REQUEST_GRANTED) return
                 if (it.duration > 0 && it.currentPosition >= it.duration) it.seekTo(0)
@@ -159,12 +177,12 @@ class PlaybackEngine private constructor(private val application: Application) {
         PlaybackService.stopForegroundPlayback()
     }
     fun seek(ms: Int) {
-        val target = ms.coerceIn(0, _state.value.durationMs)
+        val target = ms.coerceIn(0, _progress.value.durationMs)
         mediaPlayer?.seekTo(target)
-        _state.value = _state.value.copy(currentMs = target)
+        _progress.value = _progress.value.copy(currentMs = target)
         publishSession(true)
     }
-    fun skip(ms: Int) = seek(_state.value.currentMs + ms)
+    fun skip(ms: Int) = seek(_progress.value.currentMs + ms)
     fun toggleRepeat() { _state.value = _state.value.copy(repeat = !_state.value.repeat) }
     fun toggleShuffle() { _state.value = _state.value.copy(shuffle = !_state.value.shuffle) }
     fun toggleFavorite() { _state.value.selectedId?.let(library::toggleFavorite) }
@@ -174,10 +192,7 @@ class PlaybackEngine private constructor(private val application: Application) {
         mediaPlayer?.setVolume(volume, volume)
     }
     fun importSongs(uris: List<android.net.Uri>) {
-        scope.launch {
-            val first = library.importSongs(uris).firstOrNull()
-            if (first != null) withContext(Dispatchers.Main) { select(first) }
-        }
+        scope.launch { library.importSongs(uris) }
     }
     fun delete(song: Song) {
         val wasSelected = song.id == _state.value.selectedId
@@ -193,7 +208,8 @@ class PlaybackEngine private constructor(private val application: Application) {
     }
     fun clearError() { _state.value = _state.value.copy(error = null); library.error.value = null }
     private fun onSongEnded() {
-        _state.value = _state.value.copy(isPlaying = false, currentMs = _state.value.durationMs)
+        _state.value = _state.value.copy(isPlaying = false)
+        _progress.value = _progress.value.copy(currentMs = _progress.value.durationMs)
         if (_state.value.repeat) { seek(0); play(); return }
         val previousId = _state.value.selectedId
         nextSong()
@@ -201,20 +217,49 @@ class PlaybackEngine private constructor(private val application: Application) {
     }
     private fun publishSession(updateNotification: Boolean = false) {
         val current = selectedSong(library.songs.value)
-        session.setMetadata(android.media.MediaMetadata.Builder()
+        val metadata = android.media.MediaMetadata.Builder()
             .putString(android.media.MediaMetadata.METADATA_KEY_TITLE, current?.title ?: "")
             .putString(android.media.MediaMetadata.METADATA_KEY_ARTIST, current?.artist ?: "")
             .putString(android.media.MediaMetadata.METADATA_KEY_ALBUM, current?.album ?: "")
-            .putLong(android.media.MediaMetadata.METADATA_KEY_DURATION, _state.value.durationMs.toLong()).build())
+            .putLong(android.media.MediaMetadata.METADATA_KEY_DURATION, _progress.value.durationMs.toLong())
+        currentArtwork?.let { bitmap ->
+            metadata.putBitmap(android.media.MediaMetadata.METADATA_KEY_ART, bitmap)
+                .putBitmap(android.media.MediaMetadata.METADATA_KEY_ALBUM_ART, bitmap)
+                .putBitmap(android.media.MediaMetadata.METADATA_KEY_DISPLAY_ICON, bitmap)
+        }
+        session.setMetadata(metadata.build())
         val actions = PlaybackState.ACTION_PLAY or PlaybackState.ACTION_PAUSE or PlaybackState.ACTION_SEEK_TO or
             PlaybackState.ACTION_SKIP_TO_NEXT or PlaybackState.ACTION_SKIP_TO_PREVIOUS
         session.setPlaybackState(PlaybackState.Builder().setActions(actions)
             .setState(if (_state.value.isPlaying) PlaybackState.STATE_PLAYING else PlaybackState.STATE_PAUSED,
-                _state.value.currentMs.toLong(), if (_state.value.isPlaying) 1f else 0f).build())
+                _progress.value.currentMs.toLong(), if (_state.value.isPlaying) 1f else 0f).build())
         if (updateNotification) {
             if (current == null || !hasStartedPlayback) notifications.cancel(notificationId)
             else notifications.notify(notificationId, buildNotification(current))
         }
+    }
+    private fun publishArtwork(song: Song) {
+        val file = library.artworkFor(song) ?: return
+        val requestKey = "${song.id}:${song.artworkFileName}:${file.lastModified()}:${file.length()}"
+        if (artworkRequestKey == requestKey) return
+        artworkRequestKey = requestKey
+        scope.launch {
+            val bitmap = mx.musicalesdoris.reproductorlocalandroid.library.components.artwork.ArtworkBitmapLoader.decodeFile(file, 512)
+            withContext(Dispatchers.Main) {
+                if (_state.value.selectedId == song.id) {
+                    currentArtwork = bitmap
+                    publishSession(true)
+                }
+            }
+        }
+    }
+    fun stopForTaskRemoval() {
+        if (mediaPlayer != null) pause()
+        hasStartedPlayback = false
+        releasePlayer()
+        audioManager.abandonAudioFocusRequest(focusRequest)
+        _state.value = _state.value.copy(isPlaying = false)
+        publishSession(true)
     }
     private fun releasePlayer() { handler.removeCallbacks(ticker); mediaPlayer?.release(); mediaPlayer = null }
     fun currentNotification(): Notification? = selectedSong(library.songs.value)?.let { buildNotification(it) }
@@ -229,6 +274,7 @@ class PlaybackEngine private constructor(private val application: Application) {
         }
         return Notification.Builder(application, channelId)
             .setSmallIcon(android.R.drawable.ic_media_play)
+            .setLargeIcon(currentArtwork)
             .setContentTitle(current.title).setContentText(current.subtitle)
             .setContentIntent(pending("mx.musicalesdoris.OPEN_PLAYER", 0))
             .setVisibility(Notification.VISIBILITY_PUBLIC)
@@ -250,6 +296,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     private val engine = PlaybackEngine.get(application)
     val library get() = engine.library
     val state get() = engine.state
+    val progress get() = engine.progress
     fun selectedSong(songs: List<Song>) = engine.selectedSong(songs)
     fun queueSongs() = engine.queueSongs()
     fun select(song: Song, autoplay: Boolean = true, preserveQueue: Boolean = false) = engine.select(song, autoplay, preserveQueue)
@@ -269,4 +316,5 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     fun importSongs(uris: List<android.net.Uri>) = engine.importSongs(uris)
     fun delete(song: Song) = engine.delete(song)
     fun clearError() = engine.clearError()
+    fun stopForTaskRemoval() = engine.stopForTaskRemoval()
 }

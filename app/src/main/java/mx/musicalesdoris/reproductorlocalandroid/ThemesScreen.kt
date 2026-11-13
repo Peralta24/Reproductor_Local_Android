@@ -3,6 +3,8 @@ package mx.musicalesdoris.reproductorlocalandroid
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
@@ -53,11 +55,15 @@ fun ThemesScreen(theme: PlayerTheme, selectedId: String, themes: ThemeViewModel)
                         Text("Ⅱ", color = SoniqPalette.controlInk, fontSize = 17.sp,
                             modifier = Modifier.background(SoniqPalette.metalDark, CircleShape).padding(horizontal = 10.dp, vertical = 5.dp))
                         Spacer(Modifier.width(8.dp))
-                        Column(Modifier.weight(1f).padding(vertical = 8.dp).background(SoniqPalette.lcdTop, RoundedCornerShape(5.dp)).padding(8.dp)) {
-                            Text("DIGITAL MP3 PLAYER", color = SoniqPalette.lcdText, fontFamily = SoniqMonoFont, fontSize = 5.sp)
-                            Spacer(Modifier.height(4.dp))
-                            Text("♫  Tu biblioteca local", color = SoniqPalette.lcdActiveText, fontFamily = SoniqMonoFont, fontSize = 8.sp)
-                            Spacer(Modifier.height(5.dp))
+                        Column(Modifier.weight(1f).clip(RoundedCornerShape(5.dp))
+                            .background(SoniqPalette.lcdTop, RoundedCornerShape(5.dp))
+                            .padding(horizontal = 8.dp, vertical = 4.dp)) {
+                            Text("DIGITAL MP3 PLAYER", color = SoniqPalette.lcdText, fontFamily = SoniqMonoFont,
+                                fontSize = 5.sp, maxLines = 1, softWrap = false, overflow = TextOverflow.Ellipsis)
+                            Spacer(Modifier.height(3.dp))
+                            Text("♫  Tu biblioteca local", color = SoniqPalette.lcdActiveText, fontFamily = SoniqMonoFont,
+                                fontSize = 8.sp, maxLines = 1, softWrap = false, overflow = TextOverflow.Ellipsis)
+                            Spacer(Modifier.height(3.dp))
                             Box(Modifier.fillMaxWidth(.7f).height(2.dp).background(SoniqPalette.cyan))
                         }
                         Spacer(Modifier.width(8.dp))

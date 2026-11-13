@@ -242,24 +242,40 @@ class SongLibrary(private val context: Context) {
             updatedAt = System.currentTimeMillis()) else it })
         playlist.coverFileName?.let { File(playlistCoverDirectory, it).delete() }
     }
-    @Synchronized fun setPlaylistCover(id: String, uri: Uri) {
-        val old = _playlists.value.firstOrNull { it.id == id } ?: return
-        val destination = File(playlistCoverDirectory, "$id.jpg")
-        try {
+    @Synchronized fun setPlaylistCover(id: String, uri: Uri): Boolean {
+        val old = _playlists.value.firstOrNull { it.id == id } ?: return false
+        val destination = File(playlistCoverDirectory, "$id-${UUID.randomUUID()}.jpg")
+        var bitmap: Bitmap? = null
+        return try {
             val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-            context.contentResolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, bounds) }
-                ?: error("No se pudo abrir la imagen")
-            val sample = (maxOf(bounds.outWidth, bounds.outHeight) / 1200).coerceAtLeast(1)
+            val opened = context.contentResolver.openInputStream(uri)?.use {
+                BitmapFactory.decodeStream(it, null, bounds)
+                true
+            } ?: false
+            if (!opened) error("No se pudo abrir la imagen")
+            if (bounds.outWidth <= 0 || bounds.outHeight <= 0 || bounds.outWidth > 60000 || bounds.outHeight > 60000)
+                error("La imagen no es válida o excede el tamaño permitido")
+            var sample = 1
+            while (maxOf(bounds.outWidth / sample, bounds.outHeight / sample) > 1200) sample *= 2
             val options = BitmapFactory.Options().apply { inSampleSize = sample }
-            val bitmap = context.contentResolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, options) }
+            bitmap = context.contentResolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, options) }
                 ?: error("No se pudo leer la imagen")
-            destination.outputStream().use { output -> bitmap.compress(Bitmap.CompressFormat.JPEG, 88, output) }
-            bitmap.recycle()
-            updatePlaylists(_playlists.value.map {
+            destination.outputStream().use { output ->
+                if (!bitmap!!.compress(Bitmap.CompressFormat.JPEG, 88, output)) error("No se pudo codificar la imagen")
+            }
+            val updated = _playlists.value.map {
                 if (it.id == id) it.copy(coverFileName = destination.name, updatedAt = System.currentTimeMillis()) else it
-            })
-            if (old.coverFileName != destination.name) old.coverFileName?.let { File(playlistCoverDirectory, it).delete() }
-        } catch (exception: Exception) { error.value = "No se pudo guardar la portada: ${exception.localizedMessage}" }
+            }
+            savePlaylists(updated)
+            _playlists.value = updated
+            old.coverFileName?.let { File(playlistCoverDirectory, it).delete() }
+            error.value = null
+            true
+        } catch (exception: Exception) {
+            destination.delete()
+            error.value = "No se pudo guardar la portada: ${exception.localizedMessage}"
+            false
+        } finally { bitmap?.recycle() }
     }
     @Synchronized fun setPlaylistSongs(id: String, songIds: List<String>) {
         val valid = songIds.distinct().filter { selected -> _songs.value.any { it.id == selected } }

@@ -20,6 +20,12 @@ class PlaybackService : Service() {
         active = this
         return START_STICKY
     }
+    override fun onTaskRemoved(rootIntent: Intent?) {
+        PlaybackEngine.get(application as android.app.Application).stopForTaskRemoval()
+        stopForeground(STOP_FOREGROUND_REMOVE)
+        stopSelf()
+        super.onTaskRemoved(rootIntent)
+    }
     override fun onDestroy() {
         if (active === this) active = null
         super.onDestroy()

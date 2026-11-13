@@ -10,6 +10,14 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
+import android.animation.ValueAnimator
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -25,6 +33,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import mx.musicalesdoris.reproductorlocalandroid.PlayerState
+import mx.musicalesdoris.reproductorlocalandroid.PlaybackProgress
 import mx.musicalesdoris.reproductorlocalandroid.PlayerTheme
 import mx.musicalesdoris.reproductorlocalandroid.PlayerViewModel
 import mx.musicalesdoris.reproductorlocalandroid.R
@@ -34,7 +43,7 @@ import mx.musicalesdoris.reproductorlocalandroid.ui.theme.SoniqPalette
 import mx.musicalesdoris.reproductorlocalandroid.ui.theme.soniqClickable
 
 @Composable
-fun SoniqMiniPlayer(song: Song?, state: PlayerState, theme: PlayerTheme,
+fun SoniqMiniPlayer(song: Song?, state: PlayerState, progress: PlaybackProgress, theme: PlayerTheme,
                     player: PlayerViewModel, onOpen: () -> Unit) {
     Column(Modifier.fillMaxWidth().padding(horizontal = 12.dp).padding(top = 8.dp, bottom = 12.dp)) {
         Row(Modifier.fillMaxWidth().height(88.dp)
@@ -71,7 +80,7 @@ fun SoniqMiniPlayer(song: Song?, state: PlayerState, theme: PlayerTheme,
                         }
                     }
                 }
-                Text("MP3", color = SoniqPalette.cyan, fontFamily = SoniqMonoFont,
+                Text(song?.let { songFormatLabel(it.fileName) } ?: "AUDIO", color = SoniqPalette.cyan, fontFamily = SoniqMonoFont,
                     fontWeight = FontWeight.Bold, fontSize = 7.sp, letterSpacing = .5.sp,
                     modifier = Modifier.background(SoniqPalette.lcdTop, RoundedCornerShape(3.dp))
                         .padding(horizontal = 4.dp, vertical = 1.dp))
@@ -91,7 +100,7 @@ fun SoniqMiniPlayer(song: Song?, state: PlayerState, theme: PlayerTheme,
                 Box(Modifier.fillMaxWidth().height(1.dp).background(SoniqPalette.lcdBorder))
                 Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                    EqualizerMark()
+                    EqualizerMark(playing = state.isPlaying)
                     Text(song?.title ?: "Sin canción", color = SoniqPalette.lcdActiveText,
                         fontFamily = SoniqMonoFont, fontWeight = FontWeight.Bold, fontSize = 8.sp,
                         maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
@@ -101,15 +110,15 @@ fun SoniqMiniPlayer(song: Song?, state: PlayerState, theme: PlayerTheme,
                     maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.fillMaxWidth())
                 Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                    Text(time(state.currentMs), color = SoniqPalette.lcdText, fontFamily = SoniqMonoFont,
+                    Text(time(progress.currentMs), color = SoniqPalette.lcdText, fontFamily = SoniqMonoFont,
                         fontSize = 6.sp, maxLines = 1)
                     Box(Modifier.weight(1f).height(4.dp)
                         .background(SoniqPalette.lcdTrack, RoundedCornerShape(1.dp))) {
-                        Box(Modifier.fillMaxWidth(if (state.durationMs > 0)
-                            (state.currentMs.toFloat() / state.durationMs).coerceIn(0f, 1f) else 0f)
+                        Box(Modifier.fillMaxWidth(if (progress.durationMs > 0)
+                            (progress.currentMs.toFloat() / progress.durationMs).coerceIn(0f, 1f) else 0f)
                             .height(4.dp).background(SoniqPalette.cyan, RoundedCornerShape(1.dp)))
                     }
-                    Text(time(state.durationMs), color = SoniqPalette.lcdText, fontFamily = SoniqMonoFont,
+                    Text(time(progress.durationMs), color = SoniqPalette.lcdText, fontFamily = SoniqMonoFont,
                         fontSize = 6.sp, maxLines = 1)
                 }
             }
@@ -143,11 +152,26 @@ fun SoniqMiniPlayer(song: Song?, state: PlayerState, theme: PlayerTheme,
 }
 
 @Composable
-private fun EqualizerMark() {
+private fun EqualizerMark(playing: Boolean) {
+    val heights = if (playing && ValueAnimator.areAnimatorsEnabled()) {
+        val transition = rememberInfiniteTransition()
+        listOf(3f, 6f, 4f, 7f).mapIndexed { index, resting ->
+            val animated by transition.animateFloat(
+                initialValue = resting,
+                targetValue = listOf(7f, 3f, 8f, 4f)[index],
+                animationSpec = infiniteRepeatable(
+                    animation = tween(durationMillis = 440 + index * 90, delayMillis = index * 75,
+                        easing = FastOutSlowInEasing),
+                    repeatMode = RepeatMode.Reverse
+                )
+            )
+            animated
+        }
+    } else listOf(3f, 8f, 5f, 7f)
     Row(Modifier.height(8.dp), horizontalArrangement = Arrangement.spacedBy(1.dp),
         verticalAlignment = Alignment.Bottom) {
-        listOf(3.dp, 8.dp, 5.dp, 7.dp).forEach { height ->
-            Box(Modifier.width(1.dp).height(height).background(SoniqPalette.cyan))
+        heights.forEach { height ->
+            Box(Modifier.width(1.dp).height(height.dp).background(SoniqPalette.cyan))
         }
     }
 }

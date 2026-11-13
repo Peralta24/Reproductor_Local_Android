@@ -19,7 +19,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 
 @Composable
-fun MiniPlayerContent(song: Song?, state: PlayerState, theme: PlayerTheme, onTogglePlayback: () -> Unit) {
+fun MiniPlayerContent(song: Song?, state: PlayerState, progress: PlaybackProgress, theme: PlayerTheme, onTogglePlayback: () -> Unit) {
     Row(verticalAlignment = Alignment.CenterVertically) {
         Box(Modifier.size(40.dp).background(theme.background, RoundedCornerShape(10.dp)),
             contentAlignment = Alignment.Center) { Text("♫", color = theme.accent, fontSize = 22.sp) }
@@ -29,7 +29,7 @@ fun MiniPlayerContent(song: Song?, state: PlayerState, theme: PlayerTheme, onTog
                 maxLines = 1, overflow = TextOverflow.Ellipsis)
             Spacer(Modifier.height(4.dp))
             LinearProgressIndicator(progress =
-                if (state.durationMs > 0) (state.currentMs.toFloat() / state.durationMs).coerceIn(0f, 1f) else 0f,
+                if (progress.durationMs > 0) (progress.currentMs.toFloat() / progress.durationMs).coerceIn(0f, 1f) else 0f,
                 modifier = Modifier.fillMaxWidth(), color = theme.accent,
                 trackColor = Color.White.copy(alpha = .15f))
         }

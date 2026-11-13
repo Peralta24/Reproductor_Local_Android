@@ -13,11 +13,11 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 
 @Composable
-fun AuroraMiniPlayer(song: Song?, state: PlayerState, theme: PlayerTheme, onTogglePlayback: () -> Unit) {
+fun AuroraMiniPlayer(song: Song?, state: PlayerState, progress: PlaybackProgress, theme: PlayerTheme, onTogglePlayback: () -> Unit) {
     Box(Modifier.fillMaxWidth().padding(horizontal = 16.dp)
         .background(Color.White.copy(alpha = .09f), RoundedCornerShape(30.dp))
         .border(1.dp, Color.White.copy(alpha = .14f), RoundedCornerShape(30.dp))
         .padding(16.dp)) {
-        MiniPlayerContent(song, state, theme, onTogglePlayback)
+        MiniPlayerContent(song, state, progress, theme, onTogglePlayback)
     }
 }

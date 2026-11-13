@@ -8,6 +8,9 @@ import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
+import androidx.lifecycle.lifecycleScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import androidx.core.view.WindowCompat
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -47,7 +50,10 @@ class MainActivity : ComponentActivity() {
     private var coverPlaylistId: String? = null
     private val coverImporter = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         val id = coverPlaylistId
-        if (uri != null && id != null) player.library.setPlaylistCover(id, uri)
+        if (uri != null && id != null) {
+            runCatching { contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION) }
+            lifecycleScope.launch(Dispatchers.IO) { player.library.setPlaylistCover(id, uri) }
+        }
         coverPlaylistId = null
     }
     override fun onCreate(savedInstanceState: Bundle?) {

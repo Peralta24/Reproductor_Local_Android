@@ -1,6 +1,5 @@
 package mx.musicalesdoris.reproductorlocalandroid.player
 
-import android.graphics.BitmapFactory
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -9,29 +8,37 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.basicMarquee
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
-import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import android.animation.ValueAnimator
 import mx.musicalesdoris.reproductorlocalandroid.PlayerTheme
 import mx.musicalesdoris.reproductorlocalandroid.PlayerState
 import mx.musicalesdoris.reproductorlocalandroid.PlayerViewModel
 import mx.musicalesdoris.reproductorlocalandroid.Song
+import mx.musicalesdoris.reproductorlocalandroid.library.components.artwork.rememberArtworkBitmap
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun StandardPlayerScreen(theme: PlayerTheme, song: Song?, state: PlayerState, player: PlayerViewModel,
                          onClose: () -> Unit, importAudio: () -> Unit) {
+    val progress by player.progress.collectAsState()
+    val marqueeEnabled = ValueAnimator.areAnimatorsEnabled()
     val art = remember(song?.id, song?.artworkFileName) { song?.let(player.library::artworkFor) }
-    val bitmap = remember(art?.absolutePath) { art?.let { BitmapFactory.decodeFile(it.absolutePath) } }
+    val bitmap = rememberArtworkBitmap(art, 280.dp)
     val queue = player.queueSongs()
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())
         .background(Brush.verticalGradient(listOf(theme.topGlow.copy(alpha = .4f), theme.background, theme.bottomGlow.copy(alpha = .25f))))
@@ -53,28 +60,34 @@ fun StandardPlayerScreen(theme: PlayerTheme, song: Song?, state: PlayerState, pl
         Box(Modifier.size(280.dp).clip(RoundedCornerShape(theme.corner.dp))
             .background(Brush.linearGradient(listOf(theme.topGlow, theme.accent, theme.bottomGlow))),
             contentAlignment = Alignment.Center) {
-            if (bitmap != null) Image(bitmap.asImageBitmap(), "Carátula", Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
+            if (bitmap != null) Image(bitmap, "Carátula", Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
             else Text("♫", color = theme.foreground, fontSize = 100.sp)
         }
         Spacer(Modifier.height(26.dp))
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f)) {
                 Text(song?.title ?: "Sin canción", color = theme.foreground, fontSize = 26.sp,
-                    fontWeight = FontWeight.Bold, maxLines = 2, overflow = TextOverflow.Ellipsis)
-                Text(song?.subtitle ?: "Importa una canción", color = theme.muted, fontSize = 16.sp)
+                    fontWeight = FontWeight.Bold, maxLines = 1,
+                    overflow = if (marqueeEnabled) TextOverflow.Clip else TextOverflow.Ellipsis,
+                    modifier = Modifier.fillMaxWidth().then(if (marqueeEnabled)
+                        Modifier.basicMarquee(initialDelayMillis = 1200, velocity = 24.dp) else Modifier))
+                Text(song?.subtitle ?: "Importa una canción", color = theme.muted, fontSize = 16.sp,
+                    maxLines = 1, overflow = if (marqueeEnabled) TextOverflow.Clip else TextOverflow.Ellipsis,
+                    modifier = Modifier.fillMaxWidth().then(if (marqueeEnabled)
+                        Modifier.basicMarquee(initialDelayMillis = 1200, velocity = 22.dp) else Modifier))
             }
             TextButton(onClick = player::toggleFavorite, enabled = song != null) {
                 Text(if (song?.favorite == true) "♥" else "♡", color = theme.accent, fontSize = 30.sp)
             }
         }
         Spacer(Modifier.height(22.dp))
-        Slider(value = state.currentMs.toFloat().coerceIn(0f, state.durationMs.coerceAtLeast(1).toFloat()),
-            onValueChange = { player.seek(it.toInt()) }, valueRange = 0f..state.durationMs.coerceAtLeast(1).toFloat(),
-            enabled = state.durationMs > 0, colors = SliderDefaults.colors(thumbColor = theme.accent, activeTrackColor = theme.accent))
+        Slider(value = progress.currentMs.toFloat().coerceIn(0f, progress.durationMs.coerceAtLeast(1).toFloat()),
+            onValueChange = { player.seek(it.toInt()) }, valueRange = 0f..progress.durationMs.coerceAtLeast(1).toFloat(),
+            enabled = progress.durationMs > 0, colors = SliderDefaults.colors(thumbColor = theme.accent, activeTrackColor = theme.accent))
         Row(Modifier.fillMaxWidth()) {
-            Text(formatTime(state.currentMs), color = theme.muted)
+            Text(formatTime(progress.currentMs), color = theme.muted)
             Spacer(Modifier.weight(1f))
-            Text(formatTime(state.durationMs), color = theme.muted)
+            Text(formatTime(progress.durationMs), color = theme.muted)
         }
         Spacer(Modifier.height(22.dp))
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly, verticalAlignment = Alignment.CenterVertically) {
@@ -104,10 +117,12 @@ fun StandardPlayerScreen(theme: PlayerTheme, song: Song?, state: PlayerState, pl
         Spacer(Modifier.height(12.dp))
         Text("Cola · ${queue.size} canciones", color = theme.foreground, fontSize = 18.sp,
             fontWeight = FontWeight.Bold, modifier = Modifier.fillMaxWidth())
-        queue.forEach { item ->
-            Text(item.title, color = if (item.id == song?.id) theme.accent else theme.foreground,
-                modifier = Modifier.fillMaxWidth().clickable { player.select(item, preserveQueue = true) }
-                    .padding(vertical = 10.dp), maxLines = 1, overflow = TextOverflow.Ellipsis)
+        LazyColumn(Modifier.fillMaxWidth().heightIn(max = 320.dp)) {
+            items(queue, key = { it.id }) { item ->
+                Text(item.title, color = if (item.id == song?.id) theme.accent else theme.foreground,
+                    modifier = Modifier.fillMaxWidth().clickable { player.select(item, preserveQueue = true) }
+                        .padding(vertical = 10.dp), maxLines = 1, overflow = TextOverflow.Ellipsis)
+            }
         }
     }
 }

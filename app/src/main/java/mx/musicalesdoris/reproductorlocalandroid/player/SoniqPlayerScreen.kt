@@ -11,6 +11,8 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.basicMarquee
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -30,6 +32,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import android.animation.ValueAnimator
 import mx.musicalesdoris.reproductorlocalandroid.PlayerState
 import mx.musicalesdoris.reproductorlocalandroid.PlayerTheme
 import mx.musicalesdoris.reproductorlocalandroid.PlayerViewModel
@@ -37,10 +40,12 @@ import mx.musicalesdoris.reproductorlocalandroid.Song
 import mx.musicalesdoris.reproductorlocalandroid.library.components.artwork.ArtworkView
 import mx.musicalesdoris.reproductorlocalandroid.ui.theme.soniqClickable
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
 fun SoniqPlayerScreen(theme: PlayerTheme, song: Song?, state: PlayerState,
                       player: PlayerViewModel, onClose: () -> Unit) {
+    val progress by player.progress.collectAsState()
+    val marqueeEnabled = ValueAnimator.areAnimatorsEnabled()
     var menuExpanded by remember { mutableStateOf(false) }
     var showQueue by remember { mutableStateOf(false) }
     val queue = player.queueSongs()
@@ -73,7 +78,10 @@ fun SoniqPlayerScreen(theme: PlayerTheme, song: Song?, state: PlayerState,
         Spacer(Modifier.height(25.dp))
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
             Text("TU BIBLIOTECA / ${song?.album?.uppercase() ?: "ARCHIVO LOCAL"}", color = theme.muted, fontSize = 9.sp,
-                fontFamily = SoniqMonoFont, letterSpacing = .6.sp)
+                fontFamily = SoniqMonoFont, letterSpacing = .6.sp, maxLines = 1,
+                overflow = if (marqueeEnabled) TextOverflow.Clip else TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f).then(if (marqueeEnabled)
+                    Modifier.basicMarquee(initialDelayMillis = 1200, velocity = 24.dp) else Modifier))
             Text("● EN EL DISPOSITIVO", color = theme.accent, fontSize = 8.sp,
                 fontFamily = SoniqMonoFont)
         }
@@ -86,9 +94,15 @@ fun SoniqPlayerScreen(theme: PlayerTheme, song: Song?, state: PlayerState,
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f)) {
                 Text(song?.title ?: "Sin canción", color = theme.foreground, fontFamily = SoniqHeadingFont, fontSize = 25.sp,
-                    fontWeight = FontWeight.Bold, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                    fontWeight = FontWeight.Bold, maxLines = 1,
+                    overflow = if (marqueeEnabled) TextOverflow.Clip else TextOverflow.Ellipsis,
+                    modifier = Modifier.fillMaxWidth().then(if (marqueeEnabled)
+                        Modifier.basicMarquee(initialDelayMillis = 1200, velocity = 24.dp) else Modifier))
                 Text(if (song == null) "Importa una canción para empezar" else listOfNotNull(song.artist, song.album).filter(String::isNotBlank).joinToString(" · ").ifBlank { "Archivo local" },
-                    color = theme.muted, fontFamily = SoniqBodyFont, fontSize = 14.sp)
+                    color = theme.muted, fontFamily = SoniqBodyFont, fontSize = 14.sp, maxLines = 1,
+                    overflow = if (marqueeEnabled) TextOverflow.Clip else TextOverflow.Ellipsis,
+                    modifier = Modifier.fillMaxWidth().then(if (marqueeEnabled)
+                        Modifier.basicMarquee(initialDelayMillis = 1200, velocity = 22.dp) else Modifier))
             }
             Box(Modifier.size(49.dp).background(Color(0xFFCFF5FF), CircleShape)
                 .border(1.dp, Color(0xFF8BD5EC), CircleShape)
@@ -97,14 +111,14 @@ fun SoniqPlayerScreen(theme: PlayerTheme, song: Song?, state: PlayerState,
             }
         }
         Spacer(Modifier.height(19.dp))
-        Slider(value = state.currentMs.toFloat().coerceIn(0f, state.durationMs.coerceAtLeast(1).toFloat()),
-            onValueChange = { player.seek(it.toInt()) }, valueRange = 0f..state.durationMs.coerceAtLeast(1).toFloat(),
-            enabled = state.durationMs > 0, colors = SliderDefaults.colors(thumbColor = Color(0xFF1A9BE8),
+        Slider(value = progress.currentMs.toFloat().coerceIn(0f, progress.durationMs.coerceAtLeast(1).toFloat()),
+            onValueChange = { player.seek(it.toInt()) }, valueRange = 0f..progress.durationMs.coerceAtLeast(1).toFloat(),
+            enabled = progress.durationMs > 0, colors = SliderDefaults.colors(thumbColor = Color(0xFF1A9BE8),
                 activeTrackColor = Color(0xFF1A9BE8), inactiveTrackColor = Color(0xFF9DB4CC)))
         Row(Modifier.fillMaxWidth()) {
-            Text(time(state.currentMs), color = theme.muted, fontSize = 11.sp, fontFamily = FontFamily.Monospace)
+            Text(time(progress.currentMs), color = theme.muted, fontSize = 11.sp, fontFamily = FontFamily.Monospace)
             Spacer(Modifier.weight(1f))
-            Text(time(state.durationMs), color = theme.muted, fontSize = 11.sp, fontFamily = FontFamily.Monospace)
+            Text(time(progress.durationMs), color = theme.muted, fontSize = 11.sp, fontFamily = FontFamily.Monospace)
         }
         Spacer(Modifier.height(20.dp))
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween,
