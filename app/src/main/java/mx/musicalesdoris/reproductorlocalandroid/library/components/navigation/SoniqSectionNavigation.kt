@@ -3,35 +3,46 @@ package mx.musicalesdoris.reproductorlocalandroid.library.components.navigation
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import mx.musicalesdoris.reproductorlocalandroid.PlayerTheme
 import mx.musicalesdoris.reproductorlocalandroid.library.LibrarySection
+import mx.musicalesdoris.reproductorlocalandroid.ui.theme.SoniqBodyFont
+import mx.musicalesdoris.reproductorlocalandroid.ui.theme.SoniqPalette
 
 @Composable
 fun SoniqSectionNavigation(section: LibrarySection, theme: PlayerTheme, onSelect: (LibrarySection) -> Unit) {
-    Row(Modifier.fillMaxWidth().background(Brush.verticalGradient(listOf(Color(0xFFDDEEFF), Color(0xFFC7E0F7))))
-        .horizontalScroll(rememberScrollState()).padding(start = 8.dp, end = 8.dp, bottom = 10.dp),
-        horizontalArrangement = Arrangement.spacedBy(3.dp)) {
+    Row(Modifier.fillMaxWidth().height(52.dp)
+        .background(Brush.verticalGradient(listOf(SoniqPalette.pageTop, SoniqPalette.pageMiddle)))
+        .padding(horizontal = 8.dp, vertical = 4.dp),
+        horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
         LibrarySection.entries.forEach { item ->
             val selected = item == section
-            Text(item.title, color = if (selected) theme.foreground else theme.muted,
-                fontSize = 13.sp, fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
-                modifier = Modifier.background(if (selected) Brush.verticalGradient(listOf(Color.White.copy(alpha = .85f),
-                    Color.White.copy(alpha = .35f))) else Brush.verticalGradient(listOf(Color.Transparent, Color.Transparent)),
-                    RoundedCornerShape(12.dp))
-                    .border(1.dp, if (selected) Color(0xFF9AB2CC) else Color.Transparent, RoundedCornerShape(12.dp))
-                    .clickable { onSelect(item) }.padding(horizontal = 9.dp, vertical = 12.dp))
+            val shape = RoundedCornerShape(if (selected) 12.dp else 8.dp)
+            Box(Modifier.height(44.dp)
+                .clip(shape)
+                .background(if (selected) Brush.verticalGradient(listOf(
+                    androidx.compose.ui.graphics.Color.White, androidx.compose.ui.graphics.Color(0xFFD6E8F8),
+                    androidx.compose.ui.graphics.Color(0xFFBFDBF7), SoniqPalette.pageTop))
+                    else Brush.verticalGradient(listOf(SoniqPalette.pageTop, SoniqPalette.pageMiddle)), shape)
+                .border(if (selected) 1.dp else 0.dp, if (selected) SoniqPalette.border
+                    else androidx.compose.ui.graphics.Color.Transparent, shape)
+                .clickable { onSelect(item) }.padding(horizontal = 4.dp),
+                contentAlignment = androidx.compose.ui.Alignment.Center) {
+                Text(item.title, color = if (selected) SoniqPalette.ink else SoniqPalette.mutedInk,
+                    fontFamily = SoniqBodyFont, fontSize = 11.sp,
+                    fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
+                    maxLines = 1, softWrap = false)
+            }
         }
     }
 }

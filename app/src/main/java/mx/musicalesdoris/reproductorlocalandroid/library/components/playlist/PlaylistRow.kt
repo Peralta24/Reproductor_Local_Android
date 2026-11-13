@@ -16,6 +16,8 @@ import mx.musicalesdoris.reproductorlocalandroid.PlayerTheme
 import mx.musicalesdoris.reproductorlocalandroid.LibraryComponent
 import mx.musicalesdoris.reproductorlocalandroid.library.PlaylistSummary
 import mx.musicalesdoris.reproductorlocalandroid.library.components.artwork.ArtworkView
+import mx.musicalesdoris.reproductorlocalandroid.ui.theme.SoniqBodyFont
+import mx.musicalesdoris.reproductorlocalandroid.ui.theme.SoniqMonoFont
 import java.io.File
 
 @Composable
@@ -33,15 +35,18 @@ internal fun PlaylistRowLayout(playlist: PlaylistSummary, artwork: File?, theme:
                                 onOpen: () -> Unit, onRename: () -> Unit, onDelete: () -> Unit,
                                 soniq: Boolean) {
     var expanded by remember { mutableStateOf(false) }
-    Row(Modifier.fillMaxWidth().padding(vertical = 5.dp), verticalAlignment = Alignment.CenterVertically) {
+    Row(Modifier.fillMaxWidth().padding(vertical = if (soniq) 6.dp else 5.dp), verticalAlignment = Alignment.CenterVertically) {
         Row(Modifier.weight(1f).clickable(onClick = onOpen), verticalAlignment = Alignment.CenterVertically) {
-            ArtworkView(artwork, theme, 58.dp, playlist.id)
-            Spacer(Modifier.width(13.dp))
+            ArtworkView(artwork, theme, if (soniq) 60.dp else 58.dp, playlist.id)
+            Spacer(Modifier.width(if (soniq) 14.dp else 13.dp))
             Column {
-                Text(playlist.title, color = theme.foreground, fontSize = 15.sp,
+                Text(playlist.title, color = theme.foreground, fontFamily = if (soniq) SoniqBodyFont else androidx.compose.ui.text.font.FontFamily.Default,
+                    fontSize = 15.sp,
                     fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 val duration = playlist.durationMs?.let { "${it / 60000} min" } ?: "—"
-                Text("${playlist.songCount} canciones · $duration", color = theme.muted, fontSize = 12.sp)
+                Text("${playlist.songCount} canciones · $duration", color = theme.muted,
+                    fontFamily = if (soniq) SoniqBodyFont else androidx.compose.ui.text.font.FontFamily.Default,
+                    fontSize = if (soniq) 11.sp else 12.sp)
             }
         }
         Box {

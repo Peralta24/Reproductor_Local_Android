@@ -13,6 +13,8 @@ import mx.musicalesdoris.reproductorlocalandroid.PlayerTheme
 import mx.musicalesdoris.reproductorlocalandroid.LibraryComponent
 import mx.musicalesdoris.reproductorlocalandroid.library.AlbumSummary
 import mx.musicalesdoris.reproductorlocalandroid.library.components.artwork.ArtworkView
+import mx.musicalesdoris.reproductorlocalandroid.library.components.artwork.SoniqCdCase
+import mx.musicalesdoris.reproductorlocalandroid.ui.theme.SoniqBodyFont
 import java.io.File
 
 @Composable
@@ -29,14 +31,18 @@ internal fun AlbumCardLayout(album: AlbumSummary, artwork: File?, theme: PlayerT
                              onClick: () -> Unit, soniq: Boolean) {
     Column(Modifier.fillMaxWidth().clickable(onClick = onClick)) {
         BoxWithConstraints(Modifier.fillMaxWidth()) {
-            ArtworkView(artwork, theme, maxWidth, album.id)
+            if (soniq) SoniqCdCase(artwork, theme, maxWidth, album.id)
+            else ArtworkView(artwork, theme, maxWidth, album.id)
         }
         Spacer(Modifier.height(8.dp))
-        Text(album.title, color = theme.foreground, fontSize = if (soniq) 14.sp else 16.sp,
+        Text(album.title, color = theme.foreground, fontFamily = if (soniq) SoniqBodyFont else androidx.compose.ui.text.font.FontFamily.Default,
+            fontSize = if (soniq) 14.sp else 16.sp,
             fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
-        Text(album.artist, color = theme.muted, fontSize = if (soniq) 11.sp else 13.sp,
+        Text(album.artist, color = theme.muted, fontFamily = if (soniq) SoniqBodyFont else androidx.compose.ui.text.font.FontFamily.Default,
+            fontSize = if (soniq) 11.sp else 13.sp,
             maxLines = 1, overflow = TextOverflow.Ellipsis)
         Text("${album.songCount} ${if (album.songCount == 1) "canción" else "canciones"}",
-            color = theme.muted, fontSize = if (soniq) 9.sp else 12.sp)
+            color = theme.muted, fontFamily = if (soniq) SoniqBodyFont else androidx.compose.ui.text.font.FontFamily.Default,
+            fontSize = if (soniq) 9.sp else 12.sp)
     }
 }

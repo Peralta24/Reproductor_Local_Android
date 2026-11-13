@@ -8,7 +8,8 @@ import java.io.File
 @Composable
 fun AuroraSongRow(song: Song, selected: Boolean, artwork: File?, theme: PlayerTheme,
                     onSelect: () -> Unit, onFavorite: () -> Unit, onDelete: () -> Unit,
-                    destructiveTitle: String, onMoveUp: (() -> Unit)?, onMoveDown: (() -> Unit)?) {
+                    destructiveTitle: String, onMoveUp: (() -> Unit)?, onMoveDown: (() -> Unit)?,
+                    onAddToPlaylist: (() -> Unit)? = null) {
     SongRowLayout(song, selected, artwork, theme, onSelect, onFavorite, onDelete,
-        destructiveTitle, onMoveUp, onMoveDown, "aurora")
+        destructiveTitle, onMoveUp, onMoveDown, "aurora", onAddToPlaylist)
 }

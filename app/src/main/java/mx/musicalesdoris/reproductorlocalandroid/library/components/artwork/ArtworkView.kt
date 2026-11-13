@@ -16,6 +16,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.unit.Dp
@@ -26,11 +27,11 @@ import java.io.File
 
 @Composable
 fun ArtworkView(file: File?, theme: PlayerTheme, size: Dp, seed: String = "", circular: Boolean = false) {
-    val bitmap = remember(file?.absolutePath) { file?.let { BitmapFactory.decodeFile(it.absolutePath) } }
+    val bitmap = rememberArtworkBitmap(file)
     val shape = if (circular) CircleShape else RoundedCornerShape(if (theme.id == "soniq") 7.dp else 10.dp)
     Box(Modifier.size(size).clip(shape).background(if (theme.id == "soniq") Color(0xFF0D172B) else theme.surface),
         contentAlignment = Alignment.Center) {
-        if (bitmap != null) Image(bitmap.asImageBitmap(), "Carátula", Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
+        if (bitmap != null) Image(bitmap, "Carátula", Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
         else if (theme.id == "soniq") {
             val blue = seed.sumOf { it.code } % 2 == 0
             Box(Modifier.size(size * .82f).clip(CircleShape).background(Brush.sweepGradient(
@@ -40,5 +41,14 @@ fun ArtworkView(file: File?, theme: PlayerTheme, size: Dp, seed: String = "", ci
                 Box(Modifier.size(size * .12f).clip(CircleShape).background(Color(0xFF071024)))
             }
         } else Text("♫", color = theme.accent, fontSize = (size.value * .4f).sp)
+    }
+}
+
+@Composable
+internal fun rememberArtworkBitmap(file: File?): ImageBitmap? = remember(
+    file?.absolutePath, file?.lastModified(), file?.length()
+) {
+    file?.takeIf(File::isFile)?.let { artwork ->
+        runCatching { BitmapFactory.decodeFile(artwork.absolutePath)?.asImageBitmap() }.getOrNull()
     }
 }

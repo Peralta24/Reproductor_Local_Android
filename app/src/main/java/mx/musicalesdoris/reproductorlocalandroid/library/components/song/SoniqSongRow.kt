@@ -8,7 +8,8 @@ import java.io.File
 @Composable
 fun SoniqSongRow(song: Song, selected: Boolean, artwork: File?, theme: PlayerTheme,
                     onSelect: () -> Unit, onFavorite: () -> Unit, onDelete: () -> Unit,
-                    destructiveTitle: String, onMoveUp: (() -> Unit)?, onMoveDown: (() -> Unit)?) {
+                    destructiveTitle: String, onMoveUp: (() -> Unit)?, onMoveDown: (() -> Unit)?,
+                    onAddToPlaylist: (() -> Unit)? = null) {
     SongRowLayout(song, selected, artwork, theme, onSelect, onFavorite, onDelete,
-        destructiveTitle, onMoveUp, onMoveDown, "soniq")
+        destructiveTitle, onMoveUp, onMoveDown, "soniq", onAddToPlaylist)
 }

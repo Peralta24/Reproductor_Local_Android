@@ -5,6 +5,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.lifecycle.AndroidViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import mx.musicalesdoris.reproductorlocalandroid.ui.theme.SoniqPalette
 
 data class PlayerTheme(
     val id: String, val name: String, val description: String,
@@ -27,17 +28,17 @@ data class PlayerTheme(
                 Color(0xFF4DE0BF), Color(0xFF458FEB), 36,
                 LibraryComponent.entries.associateWith { "aurora" }),
             PlayerTheme("soniq", "Soniq", "Azul claro con reproductor digital",
-                Color(0xFFC7DBF5), Color(0xFFEBF5FF), Color(0xFFADC9EF),
-                Color(0xFF1252E8), Color(0xFF4CC7F5), 24,
+                SoniqPalette.blueIce, SoniqPalette.blueIceHighlight, SoniqPalette.blueIceShadow,
+                SoniqPalette.electricBlue, SoniqPalette.cyan, 24,
                 LibraryComponent.entries.associateWith { "soniq" },
-                Color(0xFF172638), Color(0xFF63758C), Color.White.copy(alpha = .66f))
+                SoniqPalette.ink, SoniqPalette.mutedInk, Color.White.copy(alpha = .66f))
         )
     }
 }
 
 class ThemeViewModel(application: Application) : AndroidViewModel(application) {
     private val preferences = application.getSharedPreferences("themes", 0)
-    private val _selectedId = MutableStateFlow(preferences.getString("selectedPlayerTheme", "neon") ?: "neon")
+    private val _selectedId = MutableStateFlow(preferences.getString("selectedPlayerTheme", "soniq") ?: "soniq")
     val selectedId = _selectedId.asStateFlow()
     init {
         preferences.edit().apply {

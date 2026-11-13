@@ -31,8 +31,11 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import mx.musicalesdoris.reproductorlocalandroid.library.LibraryScreen
+import mx.musicalesdoris.reproductorlocalandroid.library.components.miniplayer.MiniPlayer
 import mx.musicalesdoris.reproductorlocalandroid.player.ThemedPlayerScreen
 import mx.musicalesdoris.reproductorlocalandroid.ui.theme.ReproductorLocalAndroidTheme
+import mx.musicalesdoris.reproductorlocalandroid.ui.theme.SoniqHeadingFont
+import mx.musicalesdoris.reproductorlocalandroid.ui.theme.SoniqPalette
 
 class MainActivity : ComponentActivity() {
     private val player: PlayerViewModel by viewModels()
@@ -60,7 +63,11 @@ class MainActivity : ComponentActivity() {
                 insets.isAppearanceLightStatusBars = theme.id == "soniq"
                 insets.isAppearanceLightNavigationBars = theme.id == "soniq"
             }
-            ReproductorLocalAndroidTheme(darkTheme = theme.id != "soniq", dynamicColor = false) {
+            ReproductorLocalAndroidTheme(
+                darkTheme = theme.id != "soniq",
+                dynamicColor = false,
+                soniq = theme.id == "soniq"
+            ) {
                 AppScreen(player, themes, theme, requestedScreen, { importer.launch(arrayOf("audio/*")) }) { id ->
                     coverPlaylistId = id
                     coverImporter.launch(arrayOf("image/*"))
@@ -91,40 +98,51 @@ private fun AppScreen(player: PlayerViewModel, themes: ThemeViewModel, theme: Pl
     var screen by remember { mutableStateOf(requestedScreen) }
     LaunchedEffect(requestedScreen) { screen = requestedScreen }
     val error = state.error ?: libraryError
+    val selectedSong = songs.firstOrNull { it.id == state.selectedId }
     BackHandler(screen != "library") { screen = "library" }
     if (error != null) AlertDialog(onDismissRequest = player::clearError,
         title = { Text("Error") }, text = { Text(error) },
         confirmButton = { TextButton(onClick = player::clearError) { Text("Aceptar") } })
     Box(Modifier.fillMaxSize().background(theme.background).statusBarsPadding().navigationBarsPadding()) {
-        when (screen) {
-            "player" -> ThemedPlayerScreen(theme, songs.firstOrNull { it.id == state.selectedId }, state, player,
-                onClose = { screen = "library" }, importAudio = importAudio)
-            "themes" -> Column {
-                ScreenHeader("Temas", theme) { screen = "library" }
-                ThemesScreen(theme, selectedId, themes)
-            }
-            "profile" -> Column {
-                ScreenHeader("Perfil local", theme) { screen = "library" }
-                Text("${songs.size} canciones · ${songs.count { it.favorite }} favoritos · ${player.library.playlists.value.size} listas",
-                    color = theme.foreground, modifier = Modifier.padding(20.dp))
-                TextButton(onClick = { screen = "themes" }) { Text("Elegir tema", color = theme.accent) }
-            }
-            "equalizer" -> Column {
-                ScreenHeader("Ecualizador", theme) { screen = "library" }
-                Text("El ecualizador estará disponible cuando Android procese el audio con filtros.",
-                    color = theme.foreground, modifier = Modifier.padding(20.dp))
-            }
-            else -> LibraryScreen(theme, songs, state, player, importAudio,
+        if (screen == "library") {
+            LibraryScreen(theme, songs, state, player, importAudio,
                 onPlayer = { screen = "player" }, onThemes = { screen = "themes" },
                 onProfile = { screen = "profile" }, onEqualizer = { screen = "equalizer" }, chooseCover = chooseCover)
+        } else if (screen == "player") {
+            ThemedPlayerScreen(theme, selectedSong, state, player,
+                onClose = { screen = "library" }, importAudio = importAudio)
+        } else {
+            Column(Modifier.fillMaxSize()) {
+                Column(Modifier.weight(1f)) {
+                    when (screen) {
+                        "themes" -> Column {
+                            ScreenHeader("Temas", theme) { screen = "library" }
+                            ThemesScreen(theme, selectedId, themes)
+                        }
+                        "profile" -> Column {
+                            ScreenHeader("Perfil", theme) { screen = "library" }
+                            ProfileScreen(songs, player.library.playlists.value.size) { screen = "themes" }
+                        }
+                        "equalizer" -> Column(Modifier.fillMaxSize()) {
+                            ScreenHeader("Ecualizador", theme) { screen = "library" }
+                            EqualizerScreen()
+                        }
+                    }
+                }
+                MiniPlayer(selectedSong, state, theme, player) { screen = "player" }
+            }
         }
     }
 }
 
 @Composable
 private fun ScreenHeader(title: String, theme: PlayerTheme, onClose: () -> Unit) {
-    Row(Modifier.fillMaxWidth().padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
-        TextButton(onClick = onClose) { Text("‹ Volver", color = theme.accent) }
-        Text(title, color = theme.foreground, fontSize = 22.sp, fontWeight = FontWeight.Bold)
+    Box(Modifier.fillMaxWidth().height(60.dp).padding(horizontal = 20.dp), contentAlignment = Alignment.Center) {
+        TextButton(onClick = onClose, modifier = Modifier.align(Alignment.CenterStart)) {
+            Text("‹", color = if (theme.id == "soniq") SoniqPalette.ink else theme.accent, fontSize = 25.sp)
+        }
+        Text(title, color = if (theme.id == "soniq") SoniqPalette.ink else theme.foreground,
+            fontFamily = if (theme.id == "soniq") SoniqHeadingFont else androidx.compose.ui.text.font.FontFamily.Default,
+            fontSize = 22.sp, fontWeight = FontWeight.Bold)
     }
 }

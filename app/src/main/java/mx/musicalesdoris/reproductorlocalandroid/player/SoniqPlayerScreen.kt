@@ -1,6 +1,5 @@
 package mx.musicalesdoris.reproductorlocalandroid.player
 
-import android.graphics.BitmapFactory
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -20,8 +19,10 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.asImageBitmap
-import androidx.compose.ui.layout.ContentScale
+import mx.musicalesdoris.reproductorlocalandroid.library.components.artwork.SoniqCdCase
+import mx.musicalesdoris.reproductorlocalandroid.ui.theme.SoniqBodyFont
+import mx.musicalesdoris.reproductorlocalandroid.ui.theme.SoniqHeadingFont
+import mx.musicalesdoris.reproductorlocalandroid.ui.theme.SoniqMonoFont
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -34,6 +35,7 @@ import mx.musicalesdoris.reproductorlocalandroid.PlayerTheme
 import mx.musicalesdoris.reproductorlocalandroid.PlayerViewModel
 import mx.musicalesdoris.reproductorlocalandroid.Song
 import mx.musicalesdoris.reproductorlocalandroid.library.components.artwork.ArtworkView
+import mx.musicalesdoris.reproductorlocalandroid.ui.theme.soniqClickable
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -53,10 +55,11 @@ fun SoniqPlayerScreen(theme: PlayerTheme, song: Song?, state: PlayerState,
                     Box(Modifier.size(28.dp).background(theme.accent, RoundedCornerShape(7.dp)),
                         contentAlignment = Alignment.Center) { Text("≋", color = Color.White, fontSize = 19.sp) }
                     Spacer(Modifier.width(7.dp))
-                    Text("SONIQ", color = theme.foreground, fontSize = 24.sp, fontWeight = FontWeight.Black)
+                    Text("SONIQ", color = theme.foreground, fontFamily = SoniqHeadingFont,
+                        fontSize = 24.sp, fontWeight = FontWeight.Bold, letterSpacing = (-1).sp)
                 }
-                Text("REPRODUCIENDO", color = theme.muted, fontSize = 9.sp,
-                    fontFamily = FontFamily.Monospace, letterSpacing = 2.sp)
+                Text("REPRODUCIENDO", color = theme.muted, fontSize = 8.sp,
+                    fontFamily = SoniqMonoFont, letterSpacing = 1.5.sp)
             }
             Spacer(Modifier.weight(1f))
             Box {
@@ -69,10 +72,10 @@ fun SoniqPlayerScreen(theme: PlayerTheme, song: Song?, state: PlayerState,
         }
         Spacer(Modifier.height(25.dp))
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-            Text("TU BIBLIOTECA / ARCHIVO LOCAL", color = theme.muted, fontSize = 9.sp,
-                fontFamily = FontFamily.Monospace, letterSpacing = 1.sp)
-            Text("● EN EL DISPOSITIVO", color = theme.accent, fontSize = 9.sp,
-                fontFamily = FontFamily.Monospace)
+            Text("TU BIBLIOTECA / ${song?.album?.uppercase() ?: "ARCHIVO LOCAL"}", color = theme.muted, fontSize = 9.sp,
+                fontFamily = SoniqMonoFont, letterSpacing = .6.sp)
+            Text("● EN EL DISPOSITIVO", color = theme.accent, fontSize = 8.sp,
+                fontFamily = SoniqMonoFont)
         }
         Spacer(Modifier.height(19.dp))
         BoxWithConstraints(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
@@ -82,14 +85,14 @@ fun SoniqPlayerScreen(theme: PlayerTheme, song: Song?, state: PlayerState,
         Spacer(Modifier.height(23.dp))
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f)) {
-                Text(song?.title ?: "Sin canción", color = theme.foreground, fontSize = 28.sp,
+                Text(song?.title ?: "Sin canción", color = theme.foreground, fontFamily = SoniqHeadingFont, fontSize = 25.sp,
                     fontWeight = FontWeight.Bold, maxLines = 2, overflow = TextOverflow.Ellipsis)
-                Text(if (song == null) "Importa una canción para empezar" else "Archivo local",
-                    color = theme.muted, fontSize = 15.sp)
+                Text(if (song == null) "Importa una canción para empezar" else listOfNotNull(song.artist, song.album).filter(String::isNotBlank).joinToString(" · ").ifBlank { "Archivo local" },
+                    color = theme.muted, fontFamily = SoniqBodyFont, fontSize = 14.sp)
             }
             Box(Modifier.size(49.dp).background(Color(0xFFCFF5FF), CircleShape)
                 .border(1.dp, Color(0xFF8BD5EC), CircleShape)
-                .clickable(enabled = song != null, onClick = player::toggleFavorite), contentAlignment = Alignment.Center) {
+                .soniqClickable(CircleShape, enabled = song != null, onClick = player::toggleFavorite), contentAlignment = Alignment.Center) {
                 Text(if (song?.favorite == true) "♥" else "♡", color = Color(0xFF1C9BE3), fontSize = 24.sp)
             }
         }
@@ -97,7 +100,7 @@ fun SoniqPlayerScreen(theme: PlayerTheme, song: Song?, state: PlayerState,
         Slider(value = state.currentMs.toFloat().coerceIn(0f, state.durationMs.coerceAtLeast(1).toFloat()),
             onValueChange = { player.seek(it.toInt()) }, valueRange = 0f..state.durationMs.coerceAtLeast(1).toFloat(),
             enabled = state.durationMs > 0, colors = SliderDefaults.colors(thumbColor = Color(0xFF1A9BE8),
-                activeTrackColor = Color(0xFF1A9BE8)))
+                activeTrackColor = Color(0xFF1A9BE8), inactiveTrackColor = Color(0xFF9DB4CC)))
         Row(Modifier.fillMaxWidth()) {
             Text(time(state.currentMs), color = theme.muted, fontSize = 11.sp, fontFamily = FontFamily.Monospace)
             Spacer(Modifier.weight(1f))
@@ -106,31 +109,37 @@ fun SoniqPlayerScreen(theme: PlayerTheme, song: Song?, state: PlayerState,
         Spacer(Modifier.height(20.dp))
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically) {
-            Text("⤨", color = if (state.shuffle) theme.accent else theme.foreground,
-                fontSize = 20.sp, modifier = Modifier.clickable(enabled = song != null, onClick = player::toggleShuffle).padding(8.dp))
-            TransportButton("⏮", 57.dp, theme, player::previousSong)
-            TransportButton(if (state.isPlaying) "Ⅱ" else "▶", 78.dp, theme, player::togglePlayback)
-            TransportButton("⏭", 57.dp, theme, player::nextSong)
-            Text(if (state.repeat) "↻¹" else "↻", color = if (state.repeat) theme.accent else theme.foreground,
-                fontSize = 20.sp, modifier = Modifier.clickable(enabled = song != null, onClick = player::toggleRepeat).padding(8.dp))
+            SoniqTransportIcon("shuffle", Modifier.padding(8.dp).soniqClickable(CircleShape,
+                enabled = song != null, onClick = player::toggleShuffle),
+                size = 36.dp, color = if (state.shuffle) theme.accent else theme.foreground)
+            TransportButton("previous", 57.dp, theme, player::previousSong)
+            TransportButton(if (state.isPlaying) "pause" else "play", 78.dp, theme, player::togglePlayback)
+            TransportButton("next", 57.dp, theme, player::nextSong)
+            SoniqTransportIcon("repeat", Modifier.padding(8.dp).soniqClickable(CircleShape,
+                enabled = song != null, onClick = player::toggleRepeat),
+                size = 36.dp, color = if (state.repeat) theme.accent else theme.foreground)
         }
         Spacer(Modifier.height(27.dp))
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-            Text("◀", color = theme.muted, fontSize = 15.sp)
+            SoniqTransportIcon("volume", size = 21.dp, color = theme.muted)
             Slider(value = state.volume, onValueChange = player::setVolume, modifier = Modifier.weight(1f),
                 colors = SliderDefaults.colors(thumbColor = theme.foreground, activeTrackColor = theme.foreground))
-            Text("${(state.volume * 100).toInt()} %", color = theme.muted, fontSize = 11.sp,
+            Text("${(state.volume * 100).toInt()} %", color = theme.muted, fontSize = 9.sp,
                 fontFamily = FontFamily.Monospace)
+            SoniqTransportIcon("volume", size = 21.dp, color = theme.muted)
         }
         Spacer(Modifier.height(27.dp))
-        Row(Modifier.fillMaxWidth().height(72.dp).background(Color(0xFF0A1A30), RoundedCornerShape(18.dp))
-            .clickable { showQueue = true }.padding(horizontal = 17.dp), verticalAlignment = Alignment.CenterVertically) {
-            Text("☷", color = Color(0xFF5AC5F5), fontSize = 25.sp)
+        Row(Modifier.fillMaxWidth().height(72.dp).clip(RoundedCornerShape(18.dp))
+            .background(Color(0xFF0A1A30), RoundedCornerShape(18.dp))
+            .soniqClickable(RoundedCornerShape(18.dp)) { showQueue = true }
+            .padding(horizontal = 17.dp), verticalAlignment = Alignment.CenterVertically) {
+            SoniqTransportIcon("queue", size = 25.dp, color = Color(0xFF5AC5F5))
             Spacer(Modifier.width(13.dp))
             Column(Modifier.weight(1f)) {
-                Text("Cola de reproducción", color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
+                Text("Cola de reproducción", color = Color.White, fontFamily = SoniqBodyFont,
+                    fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
                 Text("${queue.size} canciones · Desde tu dispositivo", color = Color(0xFF8AA3BF),
-                    fontSize = 10.sp, fontFamily = FontFamily.Monospace)
+                    fontSize = 9.sp, fontFamily = SoniqMonoFont)
             }
             Text("›", color = Color.White, fontSize = 20.sp)
         }
@@ -155,43 +164,32 @@ fun SoniqPlayerScreen(theme: PlayerTheme, song: Song?, state: PlayerState,
 
 @Composable
 private fun ChromeButton(label: String, action: () -> Unit) {
-    Box(Modifier.size(48.dp).background(Brush.verticalGradient(listOf(Color.White, Color(0xFFD1DEEE))), CircleShape)
-        .border(1.dp, Color(0xFFA1B8CE), CircleShape).clickable(onClick = action), contentAlignment = Alignment.Center) {
+    Box(Modifier.size(48.dp).clip(CircleShape)
+        .background(Brush.verticalGradient(listOf(Color.White, Color(0xFFD1DEEE))), CircleShape)
+        .border(1.dp, Color(0xFFA1B8CE), CircleShape).soniqClickable(CircleShape, onClick = action),
+        contentAlignment = Alignment.Center) {
         Text(label, color = Color(0xFF1A293B), fontSize = 23.sp)
     }
 }
 
 @Composable
-private fun TransportButton(label: String, size: Dp, theme: PlayerTheme, action: () -> Unit) {
-    Box(Modifier.size(size).background(Brush.verticalGradient(listOf(Color.White, Color(0xFFD1DEEE))), CircleShape)
-        .border(1.dp, Color(0xFF99B3CC), CircleShape).clickable(onClick = action), contentAlignment = Alignment.Center) {
-        Text(label, color = theme.foreground, fontSize = if (size > 60.dp) 28.sp else 21.sp)
+private fun TransportButton(name: String, size: Dp, theme: PlayerTheme, action: () -> Unit) {
+    Box(Modifier.size(size).clip(CircleShape)
+        .background(Brush.verticalGradient(listOf(Color.White, Color(0xFFD1DEEE))), CircleShape)
+        .border(1.dp, Color(0xFF99B3CC), CircleShape).soniqClickable(CircleShape, onClick = action),
+        contentAlignment = Alignment.Center) {
+        SoniqTransportIcon(name, size = if (size > 60.dp) 31.dp else 24.dp, color = theme.foreground)
     }
 }
 
 @Composable
 private fun SoniqPlayerArtwork(song: Song?, player: PlayerViewModel, side: Dp) {
     val file = song?.let(player.library::artworkFor)
-    val bitmap = remember(file?.absolutePath) { file?.let { BitmapFactory.decodeFile(it.absolutePath) } }
-    Box(Modifier.size(side).clip(RoundedCornerShape(7.dp)).background(Color(0xFF292F3D)),
+    Box(Modifier.size(side),
         contentAlignment = Alignment.Center) {
-        if (bitmap != null) Image(bitmap.asImageBitmap(), "Carátula", Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
-        else {
-            Box(Modifier.size(side * .91f).background(Brush.radialGradient(listOf(
-                Color(0xFF5A94E8), Color(0xFF263D7A), Color(0xFF141C30))), CircleShape),
-                contentAlignment = Alignment.Center) {
-                Box(Modifier.size(side * .62f, side * .29f).rotate(-37f)
-                    .border((side.value * .045f).dp, Color.White.copy(alpha = .7f), CircleShape))
-                Box(Modifier.size(side * .62f, side * .27f).rotate(42f)
-                    .border((side.value * .035f).dp, Color(0xFF91BDF6), CircleShape))
-                Box(Modifier.size(side * .31f).background(Brush.radialGradient(listOf(
-                    Color(0xFF434D73), Color(0xFF1F243D))), CircleShape), contentAlignment = Alignment.Center) {
-                    Box(Modifier.size(side * .065f).background(Color(0xFF050A12), CircleShape))
-                }
-            }
-        }
+        SoniqCdCase(file, PlayerTheme.all.first { it.id == "soniq" }, side, song?.id.orEmpty())
         Text(song?.fileName?.substringAfterLast('.', "AUDIO")?.uppercase() ?: "AUDIO", color = Color.White,
-            fontSize = 10.sp, fontFamily = FontFamily.Monospace,
+            fontSize = 9.sp, fontFamily = SoniqMonoFont,
             modifier = Modifier.align(Alignment.TopStart).padding(16.dp)
                 .background(Color(0xFF09121F).copy(alpha = .75f), RoundedCornerShape(4.dp))
                 .padding(horizontal = 8.dp, vertical = 5.dp))
