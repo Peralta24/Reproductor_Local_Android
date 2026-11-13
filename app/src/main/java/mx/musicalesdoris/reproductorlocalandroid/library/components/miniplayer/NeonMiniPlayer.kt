@@ -13,11 +13,12 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 
 @Composable
-fun NeonMiniPlayer(song: Song?, state: PlayerState, theme: PlayerTheme, onTogglePlayback: () -> Unit) {
+fun NeonMiniPlayer(song: Song?, state: PlayerState, theme: PlayerTheme,
+                   onPrevious: () -> Unit, onTogglePlayback: () -> Unit, onNext: () -> Unit) {
     Box(Modifier.fillMaxWidth().padding(horizontal = 16.dp)
         .background(Color.White.copy(alpha = .09f), RoundedCornerShape(18.dp))
         .border(1.dp, Color.White.copy(alpha = .12f), RoundedCornerShape(18.dp))
         .padding(12.dp)) {
-        MiniPlayerContent(song, state, theme, onTogglePlayback)
+        MiniPlayerContent(song, state, theme, onPrevious, onTogglePlayback, onNext)
     }
 }

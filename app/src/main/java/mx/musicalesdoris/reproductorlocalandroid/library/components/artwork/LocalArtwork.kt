@@ -2,6 +2,7 @@ package mx.musicalesdoris.reproductorlocalandroid.library.components.artwork
 
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import android.util.LruCache
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
@@ -16,8 +17,22 @@ import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.layout.ContentScale
 import java.io.File
+import kotlin.math.max
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+
+private object ArtworkBitmapCache {
+    private val bitmaps = object : LruCache<String, Bitmap>(8 * 1024) {
+        override fun sizeOf(key: String, value: Bitmap): Int = max(1, value.allocationByteCount / 1024)
+    }
+
+    fun decode(file: File): Bitmap? {
+        val key = file.absolutePath
+        bitmaps.get(key)?.let { return it }
+        if (!file.isFile) return null
+        return BitmapFactory.decodeFile(key)?.also { bitmap -> bitmaps.put(key, bitmap) }
+    }
+}
 
 /** Decodes private artwork away from Compose's main thread and falls back for missing/bad images. */
 @Composable
@@ -31,7 +46,7 @@ fun LocalArtwork(
     val image by produceState<Bitmap?>(initialValue = null, key1 = file?.absolutePath) {
         value = withContext(Dispatchers.IO) {
             try {
-                file?.takeIf(File::isFile)?.let { BitmapFactory.decodeFile(it.absolutePath) }
+                file?.let(ArtworkBitmapCache::decode)
             } catch (_: Exception) {
                 null
             }

@@ -14,16 +14,22 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import mx.musicalesdoris.reproductorlocalandroid.library.components.artwork.LocalArtwork
+import java.io.File
 
 @Composable
-fun AuroraPlaylistRow(playlist: PlaylistSummary, theme: PlayerTheme) {
+fun AuroraPlaylistRow(playlist: PlaylistSummary, theme: PlayerTheme, artwork: File? = null) {
     Row(Modifier.fillMaxWidth().background(Color.White.copy(alpha = .09f), RoundedCornerShape(22.dp))
         .padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
-        Box(Modifier.size(54.dp).background(theme.background, RoundedCornerShape(20.dp)),
-            contentAlignment = Alignment.Center) { Text("♫", color = theme.accent, fontSize = 25.sp) }
+        LocalArtwork(artwork, "Portada de ${playlist.title}", Modifier.size(54.dp), RoundedCornerShape(20.dp)) {
+            Box(Modifier.fillMaxSize().background(theme.background), contentAlignment = Alignment.Center) {
+                Text("♫", color = theme.accent, fontSize = 25.sp)
+            }
+        }
         Spacer(Modifier.width(14.dp))
         Column {
             Text(playlist.title, color = Color.White, fontWeight = FontWeight.SemiBold)
+            playlist.description?.let { Text(it, color = Color.White.copy(alpha = .72f), fontSize = 12.sp, maxLines = 1) }
             Text("${playlist.songCount} canciones", color = Color.White.copy(alpha = .65f), fontSize = 12.sp)
         }
     }

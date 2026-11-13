@@ -107,6 +107,47 @@ class SongCatalogRepositoryTest {
     }
 
     @Test
+    fun availabilityReadsUseTheCachedSnapshotUntilExplicitIoRefresh() {
+        val song = Song(id = "availability-id", fileName = "availability.mp3", title = "Available")
+        repository.updateSongs { listOf(song) }
+        var exists = true
+        var checks = 0
+        val fileOperations = object : SongFileOperations {
+            override fun isFile(file: File): Boolean {
+                checks++
+                return exists
+            }
+
+            override fun deleteIfExists(file: File): Boolean = false
+        }
+        val library = SongLibrary(filesDirectory, repository, songFileOperations = fileOperations)
+        val checksAfterLoad = checks
+
+        assertTrue(library.isAvailable(song))
+        exists = false
+        assertTrue(library.isAvailable(song))
+        assertEquals(checksAfterLoad, checks)
+
+        assertFalse(library.refreshAvailability(song.id))
+        assertFalse(library.isAvailable(song))
+        assertEquals(checksAfterLoad + 1, checks)
+    }
+
+    @Test
+    fun catalogCanBeInitializedAfterConstructionWithoutExposingAnEmptyReadyState() {
+        val song = Song(id = "async-id", fileName = "async.mp3", title = "Async")
+        repository.updateSongs { listOf(song) }
+        val library = SongLibrary(filesDirectory, repository, loadOnConstruction = false)
+
+        assertTrue(library.catalogLoading.value)
+        assertTrue(library.songs.value.isEmpty())
+        assertTrue(library.initializeCatalog())
+        assertFalse(library.catalogLoading.value)
+        assertEquals(listOf(song), library.songs.value)
+        assertEquals(listOf(song), repository.loadSongs())
+    }
+
+    @Test
     fun savesAndReloadsOptionalFieldsAndKeepsIdentifier() {
         val song = Song(
             id = "stable-id",

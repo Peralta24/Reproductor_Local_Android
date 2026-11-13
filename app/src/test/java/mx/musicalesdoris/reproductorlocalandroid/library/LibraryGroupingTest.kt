@@ -3,7 +3,10 @@ package mx.musicalesdoris.reproductorlocalandroid.library
 import mx.musicalesdoris.reproductorlocalandroid.Song
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
+import org.junit.Assert.assertNotSame
 import org.junit.Test
+import java.io.File
+import kotlinx.coroutines.runBlocking
 
 class LibraryGroupingTest {
     @Test fun albumsNormalizeCaseAndWhitespaceAndKeepRepresentativeDisplayName() {
@@ -61,5 +64,63 @@ class LibraryGroupingTest {
 
         assertEquals(2, albums.size)
         assertEquals(setOf("Band A", "Band B"), albums.mapNotNull { it.artist }.toSet())
+    }
+
+    @Test fun genresNormalizeCaseWhitespaceAndIgnoreMissingValues() {
+        val songs = listOf(
+            Song("1", "1.mp3", "One", genre = "  Drum   & Bass "),
+            Song("2", "2.mp3", "Two", genre = "drum & bass"),
+            Song("3", "3.mp3", "Three", genre = " "),
+            Song("4", "4.mp3", "Four", genre = null)
+        )
+        val genres = LibraryGrouping.genres(songs)
+        assertEquals(1, genres.size)
+        assertEquals("Drum & Bass", genres.single().name)
+        assertEquals(2, genres.single().songCount)
+        assertEquals(listOf("1", "2"), genres.single().songIds)
+    }
+
+    @Test fun foldersGroupOnlyExistingFilesByActualPrivateParent() {
+        val root = java.nio.file.Files.createTempDirectory("soniq-folders-test").toFile()
+        try {
+            val firstDir = File(root, "Songs").apply { mkdirs() }
+            val otherDir = File(root, "Imported").apply { mkdirs() }
+            val songs = listOf(
+                Song("1", "1.mp3", "One"), Song("2", "2.mp3", "Two"),
+                Song("3", "3.mp3", "Three"), Song("4", "4.mp3", "Gone")
+            )
+            File(firstDir, "1.mp3").writeBytes(byteArrayOf(1))
+            File(firstDir, "2.mp3").writeBytes(byteArrayOf(1))
+            File(otherDir, "3.mp3").writeBytes(byteArrayOf(1))
+            val groups = LibraryGrouping.folders(songs) { song ->
+                File(when (song.id) { "1", "2" -> firstDir; "3" -> otherDir; else -> firstDir }, song.fileName)
+            }
+            assertEquals(2, groups.size)
+            assertEquals(2, groups.single { it.name == "Songs" }.songCount)
+            assertEquals(listOf("1", "2"), groups.single { it.name == "Songs" }.songIds)
+        } finally { root.deleteRecursively() }
+    }
+
+    @Test fun folderFilesystemGroupingRunsAwayFromTheCallingThread() = runBlocking {
+        val root = java.nio.file.Files.createTempDirectory("soniq-folder-dispatcher-test").toFile()
+        try {
+            val file = File(root, "Songs/one.mp3").apply {
+                parentFile?.mkdirs()
+                writeBytes(byteArrayOf(1))
+            }
+            val callerThread = Thread.currentThread()
+            var filesystemThread: Thread? = null
+
+            val groups = groupFoldersOnIo(listOf(Song("1", "one.mp3", "One"))) {
+                filesystemThread = Thread.currentThread()
+                file
+            }
+
+            assertNotSame(callerThread, filesystemThread)
+            assertEquals(1, groups.size)
+            assertEquals("Songs", groups.single().name)
+        } finally {
+            root.deleteRecursively()
+        }
     }
 }

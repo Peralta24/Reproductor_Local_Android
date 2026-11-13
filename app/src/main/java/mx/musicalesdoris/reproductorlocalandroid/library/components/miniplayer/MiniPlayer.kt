@@ -7,9 +7,9 @@ import androidx.compose.runtime.Composable
 
 @Composable
 fun MiniPlayer(song: Song?, state: PlayerState, variantId: String, theme: PlayerTheme,
-               onTogglePlayback: () -> Unit) {
+               onPrevious: () -> Unit, onTogglePlayback: () -> Unit, onNext: () -> Unit) {
     when (variantId) {
-        "aurora" -> AuroraMiniPlayer(song, state, theme, onTogglePlayback)
-        else -> NeonMiniPlayer(song, state, theme, onTogglePlayback)
+        "aurora" -> AuroraMiniPlayer(song, state, theme, onPrevious, onTogglePlayback, onNext)
+        else -> NeonMiniPlayer(song, state, theme, onPrevious, onTogglePlayback, onNext)
     }
 }

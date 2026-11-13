@@ -7,6 +7,7 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.activity.compose.BackHandler
 import androidx.activity.viewModels
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -32,8 +33,13 @@ import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.role
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.media3.common.Player
 import mx.musicalesdoris.reproductorlocalandroid.ui.theme.ReproductorLocalAndroidTheme
 
 class MainActivity : ComponentActivity() {
@@ -63,9 +69,12 @@ private fun AppScreen(player: PlayerViewModel, themes: ThemeViewModel, theme: Pl
     val state by player.state.collectAsState()
     val libraryError by player.library.error.collectAsState()
     val catalogNeedsRecovery by player.library.catalogNeedsRecovery.collectAsState()
+    val catalogLoading by player.library.catalogLoading.collectAsState()
+    val catalogRecoveryInProgress by player.catalogRecoveryInProgress.collectAsState()
     val recoveryMessage by player.library.recoveryMessage.collectAsState()
     val selectedId by themes.selectedId.collectAsState()
     var tab by remember { mutableIntStateOf(0) }
+    var showingQueue by remember { mutableStateOf(false) }
     var recoveryPromptDismissed by remember { mutableStateOf(false) }
     val selected = songs.firstOrNull { it.id == state.selectedId }
     val error = if (catalogNeedsRecovery) {
@@ -75,6 +84,7 @@ private fun AppScreen(player: PlayerViewModel, themes: ThemeViewModel, theme: Pl
     }
 
     LaunchedEffect(error) { recoveryPromptDismissed = false }
+    BackHandler(enabled = showingQueue) { showingQueue = false }
 
     if (error != null && (!catalogNeedsRecovery || !recoveryPromptDismissed)) AlertDialog(
         onDismissRequest = {
@@ -90,7 +100,10 @@ private fun AppScreen(player: PlayerViewModel, themes: ThemeViewModel, theme: Pl
         text = { Text(error) },
         confirmButton = {
             if (catalogNeedsRecovery) {
-                TextButton(onClick = player::recoverCatalog) { Text("Respaldar y reconstruir") }
+                TextButton(
+                    onClick = player::recoverCatalog,
+                    enabled = !catalogRecoveryInProgress
+                ) { Text(if (catalogRecoveryInProgress) "Guardando respaldo…" else "Respaldar y reconstruir") }
             } else {
                 TextButton(onClick = player::clearError) { Text("Aceptar") }
             }
@@ -106,7 +119,7 @@ private fun AppScreen(player: PlayerViewModel, themes: ThemeViewModel, theme: Pl
             NavigationBar(containerColor = theme.background) {
                 listOf("Reproductor" to "▶", "Biblioteca" to "♫", "Temas" to "◈").forEachIndexed { index, item ->
                     NavigationBarItem(
-                        selected = tab == index, onClick = { tab = index },
+                        selected = tab == index, onClick = { tab = index; if (index != 0) showingQueue = false },
                         icon = { Text(item.second, fontSize = 22.sp) }, label = { Text(item.first) },
                         colors = NavigationBarItemDefaults.colors(
                             selectedIconColor = theme.accent, selectedTextColor = theme.accent,
@@ -122,8 +135,13 @@ private fun AppScreen(player: PlayerViewModel, themes: ThemeViewModel, theme: Pl
         Box(Modifier.fillMaxSize().padding(padding).background(
             Brush.verticalGradient(listOf(theme.topGlow.copy(alpha = .42f), theme.background, theme.bottomGlow.copy(alpha = .20f)))
         )) {
-            when (tab) {
-                0 -> PlayerScreen(theme, selected, state, player, importAudio)
+            if (catalogLoading && tab != 2) {
+                CircularProgressIndicator(color = theme.accent, modifier = Modifier.align(Alignment.Center))
+            } else when (tab) {
+                0 -> if (showingQueue) QueueScreen(
+                    theme = theme, songs = songs, state = state, player = player,
+                    onBack = { showingQueue = false }
+                ) else PlayerScreen(theme, selected, state, player, importAudio, onOpenQueue = { showingQueue = true })
                 1 -> LibraryScreen(theme, songs, state, player, themes, importAudio)
                 else -> ThemesScreen(theme, selectedId, themes)
             }
@@ -147,7 +165,8 @@ private fun Artwork(theme: PlayerTheme, modifier: Modifier = Modifier) {
 }
 
 @Composable
-private fun PlayerScreen(theme: PlayerTheme, song: Song?, state: PlayerState, player: PlayerViewModel, importAudio: () -> Unit) {
+private fun PlayerScreen(theme: PlayerTheme, song: Song?, state: PlayerState, player: PlayerViewModel,
+                         importAudio: () -> Unit, onOpenQueue: () -> Unit) {
     val width = LocalConfiguration.current.screenWidthDp.dp
     val artworkSize = (width - if (theme.id == "neon") 52.dp else 80.dp)
         .coerceAtMost(if (theme.id == "neon") 490.dp else 360.dp)
@@ -156,7 +175,9 @@ private fun PlayerScreen(theme: PlayerTheme, song: Song?, state: PlayerState, pl
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-            Text("≋", fontSize = 26.sp, color = Color.White, modifier = Modifier.width(44.dp))
+            Text("≋", fontSize = 26.sp, color = Color.White, modifier = Modifier.width(44.dp)
+                .clickable(onClick = onOpenQueue)
+                .semantics { contentDescription = "Abrir cola de reproducción"; role = Role.Button })
             Text("Reproduciendo", Modifier.weight(1f), color = Color.White,
                 fontSize = 18.sp, fontWeight = FontWeight.Medium, textAlign = androidx.compose.ui.text.style.TextAlign.Center)
             TextButton(onClick = importAudio, enabled = !state.isImporting,
@@ -204,7 +225,7 @@ private fun PlayerScreen(theme: PlayerTheme, song: Song?, state: PlayerState, pl
         Spacer(Modifier.height(28.dp))
         Slider(value = state.currentMs.toFloat().coerceIn(0f, state.durationMs.coerceAtLeast(1).toFloat()),
             onValueChange = { player.seek(it.toInt()) }, valueRange = 0f..state.durationMs.coerceAtLeast(1).toFloat(),
-            enabled = state.durationMs > 0 && state.selectedFileAvailable && !state.isPreparing,
+            enabled = state.canSeek && state.durationMs > 0 && state.selectedFileAvailable && !state.isPreparing,
             colors = SliderDefaults.colors(thumbColor = theme.accent, activeTrackColor = theme.accent))
         Row(Modifier.fillMaxWidth()) {
             Text(formatTime(state.currentMs), color = Color.White.copy(alpha = .7f), fontSize = 13.sp)
@@ -212,16 +233,40 @@ private fun PlayerScreen(theme: PlayerTheme, song: Song?, state: PlayerState, pl
             Text(formatTime(state.durationMs), color = Color.White.copy(alpha = .7f), fontSize = 13.sp)
         }
         Spacer(Modifier.height(24.dp))
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly, verticalAlignment = Alignment.CenterVertically) {
-            Control("↶15", "Retroceder 15 segundos", song != null && state.selectedFileAvailable && !state.isPreparing, Color.White) { player.skip(-15_000) }
-            Box(Modifier.size(82.dp).clip(CircleShape).background(Brush.linearGradient(listOf(theme.accent, theme.secondaryAccent)))
-                .clickable(enabled = song != null && state.selectedFileAvailable && !state.isPreparing,
-                    onClick = player::togglePlayback), contentAlignment = Alignment.Center) {
+        val canTransport = song != null && state.selectedFileAvailable && !state.isPreparing
+        val canTogglePlayback = state.isPlaying || (song != null && state.selectedFileAvailable && !state.isPreparing)
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(4.dp),
+            verticalAlignment = Alignment.CenterVertically) {
+            Control("⏮", "Canción anterior", song != null && state.canSkipPrevious, Color.White,
+                Modifier.weight(1f).aspectRatio(1f), player::previous)
+            Control("↶15", "Retroceder 15 segundos", canTransport, Color.White,
+                Modifier.weight(1f).aspectRatio(1f)) { player.skip(-15_000) }
+            Box(Modifier.weight(1.4f).aspectRatio(1f).padding(5.dp).clip(CircleShape)
+                .background(Brush.linearGradient(listOf(theme.accent, theme.secondaryAccent)))
+                .clickable(enabled = canTogglePlayback, onClick = player::togglePlayback)
+                .semantics { contentDescription = if (state.isPlaying) "Pausar" else "Reproducir"; role = Role.Button },
+                contentAlignment = Alignment.Center) {
                 Text(if (state.isPreparing) "…" else if (state.isPlaying) "Ⅱ" else "▶", color = Color.White, fontSize = 32.sp)
             }
-            Control("15↷", "Adelantar 15 segundos", song != null && state.selectedFileAvailable && !state.isPreparing, Color.White) { player.skip(15_000) }
-            Control(if (state.repeat) "↻¹" else "↻", "Repetir canción", song != null && state.selectedFileAvailable,
-                if (state.repeat) theme.accent else Color.White, player::toggleRepeat)
+            Control("15↷", "Avanzar 15 segundos", canTransport, Color.White,
+                Modifier.weight(1f).aspectRatio(1f)) { player.skip(15_000) }
+            Control("⏭", "Siguiente canción", song != null && state.canSkipNext, Color.White,
+                Modifier.weight(1f).aspectRatio(1f), player::next)
+        }
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Center) {
+            val repeatLabel = when (state.repeatMode) {
+                Player.REPEAT_MODE_ALL -> "↻"
+                Player.REPEAT_MODE_ONE -> "↻¹"
+                else -> "↻"
+            }
+            val repeatDescription = when (state.repeatMode) {
+                Player.REPEAT_MODE_ALL -> "Repetir toda la cola. Cambiar modo de repetición"
+                Player.REPEAT_MODE_ONE -> "Repetir canción. Cambiar modo de repetición"
+                else -> "Repetición desactivada. Cambiar modo de repetición"
+            }
+            Control(repeatLabel, repeatDescription, song != null,
+                if (state.repeatMode != Player.REPEAT_MODE_OFF) theme.accent else Color.White,
+                Modifier.size(48.dp), player::toggleRepeat)
         }
         Spacer(Modifier.height(34.dp))
         Row(Modifier.fillMaxWidth().height(68.dp).clip(RoundedCornerShape(22.dp))
@@ -239,9 +284,18 @@ private fun PlayerScreen(theme: PlayerTheme, song: Song?, state: PlayerState, pl
 }
 
 @Composable
-private fun Control(label: String, description: String, enabled: Boolean, color: Color, onClick: () -> Unit) {
-    Text(label, modifier = Modifier.size(55.dp).clickable(enabled = enabled, onClick = onClick)
-        .wrapContentSize(), color = if (enabled) color else color.copy(alpha = .4f), fontSize = 24.sp)
+private fun Control(
+    label: String,
+    description: String,
+    enabled: Boolean,
+    color: Color,
+    modifier: Modifier = Modifier.size(55.dp),
+    onClick: () -> Unit
+) {
+    Box(modifier.clickable(enabled = enabled, onClick = onClick)
+        .semantics { contentDescription = description; role = Role.Button }, contentAlignment = Alignment.Center) {
+        Text(label, color = if (enabled) color else color.copy(alpha = .4f), fontSize = 21.sp, maxLines = 1)
+    }
 }
 
 private fun formatTime(ms: Int): String {

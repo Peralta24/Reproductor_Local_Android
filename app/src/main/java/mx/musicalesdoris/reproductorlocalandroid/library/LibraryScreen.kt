@@ -7,6 +7,7 @@ import mx.musicalesdoris.reproductorlocalandroid.library.components.song.SongRow
 import mx.musicalesdoris.reproductorlocalandroid.library.components.miniplayer.MiniPlayer
 import mx.musicalesdoris.reproductorlocalandroid.library.components.album.AlbumCard
 import mx.musicalesdoris.reproductorlocalandroid.library.components.artist.ArtistRow
+import mx.musicalesdoris.reproductorlocalandroid.library.playlists.PlaylistSectionContent
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.BorderStroke
@@ -43,11 +44,19 @@ fun LibraryScreen(
     var query by remember { mutableStateOf("") }
     var selectedAlbumId by remember { mutableStateOf<String?>(null) }
     var selectedArtistId by remember { mutableStateOf<String?>(null) }
+    var selectedGenreId by remember { mutableStateOf<String?>(null) }
+    var selectedFolderId by remember { mutableStateOf<String?>(null) }
     val selected = songs.firstOrNull { it.id == state.selectedId }
     val albums = remember(songs) { LibraryGrouping.albums(songs) }
     val artists = remember(songs) { LibraryGrouping.artists(songs) }
+    val genres = remember(songs) { LibraryGrouping.genres(songs) }
+    val folderGrouping by player.folderGrouping.collectAsState()
+    val folders = folderGrouping.folders
+    val playlistCatalog by player.playlistCatalog.collectAsState()
     val selectedAlbum = albums.firstOrNull { it.id == selectedAlbumId }
     val selectedArtist = artists.firstOrNull { it.id == selectedArtistId }
+    val selectedGenre = genres.firstOrNull { it.id == selectedGenreId }
+    val selectedFolder = folders.firstOrNull { it.id == selectedFolderId }
 
     Column(Modifier.fillMaxSize().background(theme.background)) {
         AppHeader(themes.variantFor(LibraryComponent.HEADER, theme), theme, importAudio)
@@ -55,6 +64,8 @@ fun LibraryScreen(
             section = it
             selectedAlbumId = null
             selectedArtistId = null
+            selectedGenreId = null
+            selectedFolderId = null
         }
         if (state.isImporting) {
             Text(
@@ -66,17 +77,26 @@ fun LibraryScreen(
         }
         Spacer(Modifier.height(8.dp))
         Column(Modifier.weight(1f).padding(horizontal = 20.dp)) {
-            if (selectedAlbum != null || selectedArtist != null) {
+            if (selectedAlbum != null || selectedArtist != null || selectedGenre != null || selectedFolder != null) {
                 CollectionBackButton(
-                    destination = if (selectedAlbum != null) "Álbumes" else "Artistas",
+                    destination = when {
+                        selectedAlbum != null -> "Álbumes"
+                        selectedArtist != null -> "Artistas"
+                        selectedGenre != null -> "Géneros"
+                        else -> "Carpetas"
+                    },
+                    theme = theme,
                     onClick = {
                         selectedAlbumId = null
                         selectedArtistId = null
+                        selectedGenreId = null
+                        selectedFolderId = null
                     }
                 )
                 Spacer(Modifier.height(10.dp))
             }
-            Text(selectedAlbum?.title ?: selectedArtist?.name ?: section.heading,
+            if (section != LibrarySection.PLAYLISTS) Text(selectedAlbum?.title ?: selectedArtist?.name
+                ?: selectedGenre?.name ?: selectedFolder?.name ?: section.heading,
                 color = Color.White, fontSize = 30.sp, fontWeight = FontWeight.Bold,
                 modifier = Modifier.padding(top = 18.dp, bottom = 16.dp))
             when {
@@ -86,6 +106,14 @@ fun LibraryScreen(
                 }
                 selectedArtist != null -> {
                     val collectionSongs = selectedArtist.songIds.mapNotNull { id -> songs.firstOrNull { it.id == id } }
+                    SongRows(collectionSongs, state, player, themes, theme, queue = collectionSongs)
+                }
+                selectedGenre != null -> {
+                    val collectionSongs = selectedGenre.songIds.mapNotNull { id -> songs.firstOrNull { it.id == id } }
+                    SongRows(collectionSongs, state, player, themes, theme, queue = collectionSongs)
+                }
+                selectedFolder != null -> {
+                    val collectionSongs = selectedFolder.songIds.mapNotNull { id -> songs.firstOrNull { it.id == id } }
                     SongRows(collectionSongs, state, player, themes, theme, queue = collectionSongs)
                 }
                 section == LibrarySection.SONGS || section == LibrarySection.FAVORITES -> {
@@ -125,38 +153,81 @@ fun LibraryScreen(
                         }
                     }
                 }
-                section == LibrarySection.PLAYLISTS -> EmptyLibraryState("Aún no hay listas", theme)
+                section == LibrarySection.GENRES -> {
+                    if (genres.isEmpty()) EmptyLibraryState("No hay géneros en los metadatos locales", theme)
+                    else LazyColumn(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                        items(genres, key = { it.id }) { group ->
+                            GroupedLibraryRow(group.name, "${group.songCount} canciones", theme) {
+                                selectedGenreId = group.id
+                            }
+                        }
+                    }
+                }
+                section == LibrarySection.FOLDERS -> {
+                    if (folderGrouping.isLoading) Text("Cargando carpetas…", color = Color.White.copy(alpha = .7f))
+                    else if (folders.isEmpty()) EmptyLibraryState("No hay archivos disponibles en carpetas locales", theme)
+                    else LazyColumn(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                        items(folders, key = { it.id }) { group ->
+                            GroupedLibraryRow(group.name, "${group.songCount} canciones · Almacenamiento privado de SONIQ", theme) {
+                                selectedFolderId = group.id
+                            }
+                        }
+                    }
+                }
+                section == LibrarySection.PLAYLISTS -> PlaylistSectionContent(
+                    songs = songs,
+                    catalog = playlistCatalog,
+                    player = player,
+                    theme = theme,
+                    variantId = themes.variantFor(LibraryComponent.PLAYLIST, theme)
+                )
                 else -> EmptyLibraryState("No hay contenido", theme)
             }
         }
         MiniPlayer(selected, state, themes.variantFor(LibraryComponent.MINI_PLAYER, theme), theme,
-            onTogglePlayback = player::togglePlayback)
+            onPrevious = player::previous,
+            onTogglePlayback = player::togglePlayback,
+            onNext = player::next)
         Spacer(Modifier.height(10.dp))
+    }
+}
+
+@Composable
+private fun GroupedLibraryRow(title: String, subtitle: String, theme: PlayerTheme, onClick: () -> Unit) {
+    Surface(
+        modifier = Modifier.fillMaxWidth().clickable(onClick = onClick),
+        shape = RoundedCornerShape((theme.corner / 2).coerceIn(12, 18).dp),
+        color = Color.White.copy(alpha = .08f),
+        border = BorderStroke(1.dp, Color.White.copy(alpha = .12f))
+    ) {
+        Row(Modifier.padding(horizontal = 16.dp, vertical = 14.dp), verticalAlignment = Alignment.CenterVertically) {
+            Text("♫", color = theme.accent, fontSize = 25.sp)
+            Spacer(Modifier.width(14.dp))
+            Column(Modifier.weight(1f)) {
+                Text(title, color = Color.White, fontWeight = FontWeight.SemiBold)
+                Text(subtitle, color = Color.White.copy(alpha = .68f), fontSize = 12.sp)
+            }
+            Text("›", color = theme.accent, fontSize = 24.sp)
+        }
     }
 }
 
 /** Matches the official detail-header control (Figma node 8:3172, "Volver"). */
 @Composable
-private fun CollectionBackButton(destination: String, onClick: () -> Unit) {
+internal fun CollectionBackButton(destination: String, theme: PlayerTheme, onClick: () -> Unit) {
     Surface(
-        modifier = Modifier.width(90.dp).height(36.dp).clickable(onClick = onClick),
-        shape = RoundedCornerShape(12.dp),
-        color = Color.Transparent,
-        border = BorderStroke(1.dp, Color(0xFFA0BEDD)),
-        shadowElevation = 2.dp
+        modifier = Modifier.height(38.dp).clickable(onClick = onClick),
+        shape = RoundedCornerShape((theme.corner / 2).coerceIn(12, 18).dp),
+        color = theme.background.copy(alpha = .78f),
+        border = BorderStroke(1.dp, theme.accent.copy(alpha = .58f)),
+        shadowElevation = 0.dp
     ) {
-        Row(
-            modifier = Modifier
-                .fillMaxSize()
-                .background(Brush.verticalGradient(listOf(
-                    Color.White, Color(0xFFD6E8F8), Color(0xFFBFDBF7), Color(0xFFEAF2FB)
-                )))
-                .padding(horizontal = 10.dp),
+        Row(modifier = Modifier.padding(horizontal = 12.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(7.dp)
         ) {
-            Text("‹", color = Color(0xFF182231), fontSize = 22.sp, lineHeight = 16.sp)
-            Text(destination, color = Color(0xFF182231), fontSize = 11.sp, fontWeight = FontWeight.Bold)
+            Text("‹", color = theme.accent, fontSize = 22.sp, lineHeight = 16.sp)
+            Text(destination, color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
         }
     }
 }
@@ -170,10 +241,11 @@ private fun SongRows(
     theme: PlayerTheme,
     queue: List<Song> = songs
 ) {
+    val availability by player.library.availabilityBySongId.collectAsState()
     LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         items(songs, key = { it.id }) { song ->
             SongRow(song, player.library.artworkFileFor(song), song.id == state.selectedId,
-                player.library.isAvailable(song), themes.variantFor(LibraryComponent.SONG, theme), theme,
+                availability[song.id] == true, themes.variantFor(LibraryComponent.SONG, theme), theme,
                 onSelect = { player.playCollection(queue, song) },
                 onFavorite = { player.toggleFavorite(song.id) },
                 onDelete = { player.delete(song) })

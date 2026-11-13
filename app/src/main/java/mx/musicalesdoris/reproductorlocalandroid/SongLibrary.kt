@@ -72,7 +72,8 @@ class SongLibrary internal constructor(
     private val artworkNormalizer: EmbeddedArtworkNormalizer = NoopEmbeddedArtworkNormalizer,
     private val artworkStore: SongArtworkStore = FileSongArtworkStore(File(filesDirectory, "AlbumArtwork")),
     private val clockMillis: () -> Long = System::currentTimeMillis,
-    private val metadataDiagnostics: MetadataDiagnosticsReporter = NoopMetadataDiagnosticsReporter
+    private val metadataDiagnostics: MetadataDiagnosticsReporter = NoopMetadataDiagnosticsReporter,
+    private val loadOnConstruction: Boolean = true
 ) {
     constructor(context: Context) : this(
         filesDirectory = context.filesDir,
@@ -84,10 +85,11 @@ class SongLibrary internal constructor(
         metadataExtractor = AndroidSongMetadataExtractor(diagnostics = AndroidLogMetadataDiagnosticsReporter),
         artworkNormalizer = AndroidEmbeddedArtworkNormalizer(),
         artworkStore = FileSongArtworkStore(File(context.filesDir, "AlbumArtwork")),
-        metadataDiagnostics = AndroidLogMetadataDiagnosticsReporter
+        metadataDiagnostics = AndroidLogMetadataDiagnosticsReporter,
+        loadOnConstruction = false
     )
 
-    private val directory = File(filesDirectory, "Songs").apply { mkdirs() }
+    private val directory = File(filesDirectory, "Songs")
     private val operationLock = ReentrantLock()
 
     val error = MutableStateFlow<String?>(null)
@@ -95,12 +97,34 @@ class SongLibrary internal constructor(
     val catalogNeedsRecovery = _catalogNeedsRecovery.asStateFlow()
     private val _recoveryMessage = MutableStateFlow<String?>(null)
     val recoveryMessage = _recoveryMessage.asStateFlow()
-    private val _songs = MutableStateFlow(loadSongs())
+    private val _catalogLoading = MutableStateFlow(!loadOnConstruction)
+    val catalogLoading = _catalogLoading.asStateFlow()
+    private val _catalogReadable = MutableStateFlow(true)
+    private var catalogLoaded = false
+    private val _songs = MutableStateFlow<List<Song>>(emptyList())
     val songs = _songs.asStateFlow()
+    private val _availabilityBySongId = MutableStateFlow<Map<String, Boolean>>(emptyMap())
+    val availabilityBySongId = _availabilityBySongId.asStateFlow()
+
+    init {
+        if (loadOnConstruction) operationLock.withLock { loadCatalogLocked() }
+    }
+
+    /** Loads persisted state once. Production callers run this on Dispatchers.IO. */
+    fun initializeCatalog(): Boolean = operationLock.withLock { loadCatalogLocked() }
 
     fun fileFor(song: Song) = File(directory, song.fileName)
 
-    fun isAvailable(song: Song): Boolean = songFileOperations.isFile(fileFor(song))
+    /** Returns the last availability snapshot. Filesystem inspection is performed only by IO callers. */
+    fun isAvailable(song: Song): Boolean = _availabilityBySongId.value[song.id] == true
+
+    /** Refreshes one record from disk; callers must invoke this from Dispatchers.IO. */
+    fun refreshAvailability(songId: String): Boolean = operationLock.withLock {
+        val song = _songs.value.firstOrNull { it.id == songId } ?: return false
+        val available = runCatching { songFileOperations.isFile(fileFor(song)) }.getOrDefault(false)
+        _availabilityBySongId.value = _availabilityBySongId.value + (songId to available)
+        available
+    }
 
     fun artworkFileFor(song: Song): File? = artworkStore.fileFor(song.artworkPath)
 
@@ -151,6 +175,9 @@ class SongLibrary internal constructor(
         var destination: File? = null
         var storedArtworkPath: String? = null
         try {
+            if (!directory.isDirectory && !directory.mkdirs() && !directory.isDirectory) {
+                throw IOException("No se pudo crear el almacenamiento de canciones")
+            }
             val name = source.displayName
             val extension = name.substringAfterLast('.', "").takeIf { it != name }?.let { ".$it" } ?: ""
             val fileName = UUID.randomUUID().toString() + extension
@@ -176,6 +203,7 @@ class SongLibrary internal constructor(
                 }
             }
             val updated = catalogRepository.updateSongs { current -> current + song }
+            _availabilityBySongId.value = _availabilityBySongId.value + (song.id to true)
             _songs.value = updated
             added += song
         } catch (exception: Exception) {
@@ -259,7 +287,7 @@ class SongLibrary internal constructor(
     fun scanMissingMetadata() = operationLock.withLock {
         if (!ensureCatalogWritable()) return
         val current = try {
-            catalogRepository.loadSongs().also { _songs.value = it }
+            catalogRepository.loadSongs().also(::publishLoadedSongs)
         } catch (exception: Exception) {
             reportMutationFailure(exception)
             return
@@ -408,9 +436,12 @@ class SongLibrary internal constructor(
         } catch (exception: Exception) {
             if (audioDeleted) {
                 try {
-                    _songs.value = catalogRepository.loadSongs()
+                    publishLoadedSongs(catalogRepository.loadSongs())
                 } catch (readException: Exception) {
                     reportMutationFailure(readException)
+                }
+                removedSong?.let { removed ->
+                    _availabilityBySongId.value = _availabilityBySongId.value + (removed.id to false)
                 }
                 if (!_catalogNeedsRecovery.value) {
                     error.value = "Se eliminó el archivo de audio, pero no se pudo guardar la eliminación del registro. " +
@@ -429,6 +460,7 @@ class SongLibrary internal constructor(
             return false
         }
 
+        _availabilityBySongId.value = _availabilityBySongId.value - existingSong.id
         _songs.value = updated
         error.value = null
         try {
@@ -446,7 +478,11 @@ class SongLibrary internal constructor(
         }
         try {
             val backup = catalogRepository.recoverUnreadableCatalog()
+            _availabilityBySongId.value = emptyMap()
             _songs.value = emptyList()
+            _catalogReadable.value = true
+            catalogLoaded = true
+            _catalogLoading.value = false
             _catalogNeedsRecovery.value = false
             error.value = null
             _recoveryMessage.value = "Se creó una biblioteca nueva. El catálogo original se conservó en ${backup.name}."
@@ -464,6 +500,11 @@ class SongLibrary internal constructor(
     }
 
     private fun ensureCatalogWritable(): Boolean {
+        if (!catalogLoaded && !loadCatalogLocked()) return false
+        if (!_catalogReadable.value) {
+            error.value = error.value ?: "No se pudo leer la biblioteca; no se permitirán cambios hasta poder leer el catálogo"
+            return false
+        }
         if (!_catalogNeedsRecovery.value) return true
         error.value = "El catálogo no se puede modificar hasta completar una recuperación explícita"
         return false
@@ -478,18 +519,36 @@ class SongLibrary internal constructor(
         }
     }
 
-    private fun loadSongs(): List<Song> = try {
-        val loaded = catalogRepository.loadSongs()
-        _catalogNeedsRecovery.value = false
-        loaded
-    } catch (exception: Exception) {
-        if (exception is CatalogReadException) _catalogNeedsRecovery.value = true
-        error.value = if (exception is CatalogReadException) {
-            unreadableCatalogMessage()
-        } else {
-            "No se pudo leer la biblioteca: ${exception.localizedMessage}"
+    private fun loadCatalogLocked(): Boolean {
+        if (catalogLoaded) return _catalogReadable.value
+        _catalogLoading.value = true
+        return try {
+            publishLoadedSongs(catalogRepository.loadSongs())
+            _catalogReadable.value = true
+            _catalogNeedsRecovery.value = false
+            true
+        } catch (exception: Exception) {
+            _songs.value = emptyList()
+            _catalogReadable.value = false
+            if (exception is CatalogReadException) _catalogNeedsRecovery.value = true
+            error.value = if (exception is CatalogReadException) {
+                unreadableCatalogMessage()
+            } else {
+                "No se pudo leer la biblioteca: ${exception.localizedMessage}"
+            }
+            false
+        } finally {
+            catalogLoaded = true
+            _catalogLoading.value = false
         }
-        emptyList()
+    }
+
+    private fun publishLoadedSongs(loaded: List<Song>) {
+        val availability = loaded.associate { song ->
+            song.id to runCatching { songFileOperations.isFile(fileFor(song)) }.getOrDefault(false)
+        }
+        _availabilityBySongId.value = availability
+        _songs.value = loaded
     }
 
     private fun unreadableCatalogMessage(): String =
