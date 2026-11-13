@@ -1,19 +1,18 @@
 package mx.musicalesdoris.reproductorlocalandroid
 
-import mx.musicalesdoris.reproductorlocalandroid.library.LibraryScreen
-
+import android.content.Intent
+import android.graphics.BitmapFactory
 import android.os.Bundle
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
+import androidx.core.view.WindowCompat
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -23,176 +22,109 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Brush
-import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.platform.LocalConfiguration
-import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import mx.musicalesdoris.reproductorlocalandroid.library.LibraryScreen
+import mx.musicalesdoris.reproductorlocalandroid.player.ThemedPlayerScreen
 import mx.musicalesdoris.reproductorlocalandroid.ui.theme.ReproductorLocalAndroidTheme
 
 class MainActivity : ComponentActivity() {
     private val player: PlayerViewModel by viewModels()
+    private var requestedScreen by mutableStateOf("library")
     private val themes: ThemeViewModel by viewModels()
     private val importer = registerForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
         if (uris.isNotEmpty()) player.importSongs(uris)
     }
-
+    private var coverPlaylistId: String? = null
+    private val coverImporter = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        val id = coverPlaylistId
+        if (uri != null && id != null) player.library.setPlaylistCover(id, uri)
+        coverPlaylistId = null
+    }
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         window.statusBarColor = android.graphics.Color.TRANSPARENT
         window.navigationBarColor = android.graphics.Color.TRANSPARENT
+        handleAction(intent)
         setContent {
             val selectedId by themes.selectedId.collectAsState()
             val theme = PlayerTheme.all.firstOrNull { it.id == selectedId } ?: PlayerTheme.all.first()
-            ReproductorLocalAndroidTheme(darkTheme = true, dynamicColor = false) {
-                AppScreen(player, themes, theme) { importer.launch(arrayOf("audio/*")) }
+            SideEffect {
+                val insets = WindowCompat.getInsetsController(window, window.decorView)
+                insets.isAppearanceLightStatusBars = theme.id == "soniq"
+                insets.isAppearanceLightNavigationBars = theme.id == "soniq"
+            }
+            ReproductorLocalAndroidTheme(darkTheme = theme.id != "soniq", dynamicColor = false) {
+                AppScreen(player, themes, theme, requestedScreen, { importer.launch(arrayOf("audio/*")) }) { id ->
+                    coverPlaylistId = id
+                    coverImporter.launch(arrayOf("image/*"))
+                }
             }
         }
     }
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        handleAction(intent)
+    }
+    private fun handleAction(intent: Intent?) {
+        when (intent?.action) {
+            "mx.musicalesdoris.OPEN_PLAYER" -> requestedScreen = "player"
+            "mx.musicalesdoris.PREVIOUS" -> player.previousSong()
+            "mx.musicalesdoris.TOGGLE" -> player.togglePlayback()
+            "mx.musicalesdoris.NEXT" -> player.nextSong()
+        }
+    }
 }
-
 @Composable
-private fun AppScreen(player: PlayerViewModel, themes: ThemeViewModel, theme: PlayerTheme, importAudio: () -> Unit) {
+private fun AppScreen(player: PlayerViewModel, themes: ThemeViewModel, theme: PlayerTheme,
+                      requestedScreen: String, importAudio: () -> Unit, chooseCover: (String) -> Unit) {
     val songs by player.library.songs.collectAsState()
     val state by player.state.collectAsState()
     val libraryError by player.library.error.collectAsState()
     val selectedId by themes.selectedId.collectAsState()
-    var tab by remember { mutableIntStateOf(0) }
-    val selected = songs.firstOrNull { it.id == state.selectedId }
+    var screen by remember { mutableStateOf(requestedScreen) }
+    LaunchedEffect(requestedScreen) { screen = requestedScreen }
     val error = state.error ?: libraryError
-
-    if (error != null) AlertDialog(
-        onDismissRequest = player::clearError,
+    BackHandler(screen != "library") { screen = "library" }
+    if (error != null) AlertDialog(onDismissRequest = player::clearError,
         title = { Text("Error") }, text = { Text(error) },
-        confirmButton = { TextButton(onClick = player::clearError) { Text("Aceptar") } }
-    )
-
-    Scaffold(
-        containerColor = theme.background,
-        bottomBar = {
-            NavigationBar(containerColor = theme.background) {
-                listOf("Reproductor" to "▶", "Biblioteca" to "♫", "Temas" to "◈").forEachIndexed { index, item ->
-                    NavigationBarItem(
-                        selected = tab == index, onClick = { tab = index },
-                        icon = { Text(item.second, fontSize = 22.sp) }, label = { Text(item.first) },
-                        colors = NavigationBarItemDefaults.colors(
-                            selectedIconColor = theme.accent, selectedTextColor = theme.accent,
-                            indicatorColor = theme.accent.copy(alpha = .14f),
-                            unselectedIconColor = Color.White.copy(alpha = .65f),
-                            unselectedTextColor = Color.White.copy(alpha = .65f)
-                        )
-                    )
-                }
+        confirmButton = { TextButton(onClick = player::clearError) { Text("Aceptar") } })
+    Box(Modifier.fillMaxSize().background(theme.background).statusBarsPadding().navigationBarsPadding()) {
+        when (screen) {
+            "player" -> ThemedPlayerScreen(theme, songs.firstOrNull { it.id == state.selectedId }, state, player,
+                onClose = { screen = "library" }, importAudio = importAudio)
+            "themes" -> Column {
+                ScreenHeader("Temas", theme) { screen = "library" }
+                ThemesScreen(theme, selectedId, themes)
             }
-        }
-    ) { padding ->
-        Box(Modifier.fillMaxSize().padding(padding).background(
-            Brush.verticalGradient(listOf(theme.topGlow.copy(alpha = .42f), theme.background, theme.bottomGlow.copy(alpha = .20f)))
-        )) {
-            when (tab) {
-                0 -> PlayerScreen(theme, selected, state, player, importAudio)
-                1 -> LibraryScreen(theme, songs, state, player, themes, importAudio)
-                else -> ThemesScreen(theme, selectedId, themes)
+            "profile" -> Column {
+                ScreenHeader("Perfil local", theme) { screen = "library" }
+                Text("${songs.size} canciones · ${songs.count { it.favorite }} favoritos · ${player.library.playlists.value.size} listas",
+                    color = theme.foreground, modifier = Modifier.padding(20.dp))
+                TextButton(onClick = { screen = "themes" }) { Text("Elegir tema", color = theme.accent) }
             }
+            "equalizer" -> Column {
+                ScreenHeader("Ecualizador", theme) { screen = "library" }
+                Text("El ecualizador estará disponible cuando Android procese el audio con filtros.",
+                    color = theme.foreground, modifier = Modifier.padding(20.dp))
+            }
+            else -> LibraryScreen(theme, songs, state, player, importAudio,
+                onPlayer = { screen = "player" }, onThemes = { screen = "themes" },
+                onProfile = { screen = "profile" }, onEqualizer = { screen = "equalizer" }, chooseCover = chooseCover)
         }
     }
 }
 
 @Composable
-private fun Artwork(theme: PlayerTheme, modifier: Modifier = Modifier) {
-    val shape = RoundedCornerShape(theme.corner.dp)
-    Box(modifier.clip(shape).background(
-        Brush.linearGradient(listOf(theme.topGlow, theme.background, theme.bottomGlow))
-    ), contentAlignment = Alignment.Center) {
-        if (theme.id == "neon") {
-            Image(painterResource(R.drawable.neon_sunset), "Carátula con un atardecer neón sobre el mar",
-                Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
-        } else {
-            Text("≋", fontSize = 116.sp, color = Color.White.copy(alpha = .75f))
-        }
+private fun ScreenHeader(title: String, theme: PlayerTheme, onClose: () -> Unit) {
+    Row(Modifier.fillMaxWidth().padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
+        TextButton(onClick = onClose) { Text("‹ Volver", color = theme.accent) }
+        Text(title, color = theme.foreground, fontSize = 22.sp, fontWeight = FontWeight.Bold)
     }
-}
-
-@Composable
-private fun PlayerScreen(theme: PlayerTheme, song: Song?, state: PlayerState, player: PlayerViewModel, importAudio: () -> Unit) {
-    val width = LocalConfiguration.current.screenWidthDp.dp
-    val artworkSize = (width - if (theme.id == "neon") 52.dp else 80.dp)
-        .coerceAtMost(if (theme.id == "neon") 490.dp else 360.dp)
-    Column(
-        Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 26.dp, vertical = 14.dp),
-        horizontalAlignment = Alignment.CenterHorizontally
-    ) {
-        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-            Text("≋", fontSize = 26.sp, color = Color.White, modifier = Modifier.width(44.dp))
-            Text("Reproduciendo", Modifier.weight(1f), color = Color.White,
-                fontSize = 18.sp, fontWeight = FontWeight.Medium, textAlign = androidx.compose.ui.text.style.TextAlign.Center)
-            TextButton(onClick = importAudio, modifier = Modifier.width(44.dp), contentPadding = PaddingValues(0.dp)) {
-                Text("+", fontSize = 30.sp, color = Color.White)
-            }
-        }
-        Spacer(Modifier.height(28.dp))
-        Artwork(theme, Modifier.size(artworkSize).shadow(28.dp, RoundedCornerShape(theme.corner.dp)))
-        Spacer(Modifier.height(28.dp))
-        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-            Column(Modifier.weight(1f)) {
-                Text(song?.title ?: "Sin canción", color = Color.White, fontSize = 29.sp,
-                    fontWeight = FontWeight.Bold, maxLines = 2, overflow = TextOverflow.Ellipsis)
-                Spacer(Modifier.height(5.dp))
-                Text(if (song == null) "Importa una canción para empezar" else "Archivo local",
-                    color = Color.White.copy(alpha = .68f), fontSize = 17.sp)
-            }
-            Spacer(Modifier.width(8.dp))
-            TextButton(onClick = player::toggleFavorite, enabled = song != null,
-                modifier = Modifier.size(52.dp).background(Color.White.copy(alpha = .09f), RoundedCornerShape(17.dp)),
-                contentPadding = PaddingValues(0.dp)) {
-                Text(if (song?.favorite == true) "♥" else "♡", color = theme.accent, fontSize = 30.sp)
-            }
-        }
-        Spacer(Modifier.height(28.dp))
-        Slider(value = state.currentMs.toFloat().coerceIn(0f, state.durationMs.coerceAtLeast(1).toFloat()),
-            onValueChange = { player.seek(it.toInt()) }, valueRange = 0f..state.durationMs.coerceAtLeast(1).toFloat(),
-            enabled = state.durationMs > 0, colors = SliderDefaults.colors(thumbColor = theme.accent, activeTrackColor = theme.accent))
-        Row(Modifier.fillMaxWidth()) {
-            Text(formatTime(state.currentMs), color = Color.White.copy(alpha = .7f), fontSize = 13.sp)
-            Spacer(Modifier.weight(1f))
-            Text(formatTime(state.durationMs), color = Color.White.copy(alpha = .7f), fontSize = 13.sp)
-        }
-        Spacer(Modifier.height(24.dp))
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly, verticalAlignment = Alignment.CenterVertically) {
-            Control("↶15", "Retroceder 15 segundos", song != null, Color.White) { player.skip(-15_000) }
-            Box(Modifier.size(82.dp).clip(CircleShape).background(Brush.linearGradient(listOf(theme.accent, theme.secondaryAccent)))
-                .clickable(enabled = song != null, onClick = player::togglePlayback), contentAlignment = Alignment.Center) {
-                Text(if (state.isPlaying) "Ⅱ" else "▶", color = Color.White, fontSize = 32.sp)
-            }
-            Control("15↷", "Adelantar 15 segundos", song != null, Color.White) { player.skip(15_000) }
-            Control(if (state.repeat) "↻¹" else "↻", "Repetir canción", song != null,
-                if (state.repeat) theme.accent else Color.White, player::toggleRepeat)
-        }
-        Spacer(Modifier.height(34.dp))
-        Row(Modifier.fillMaxWidth().height(68.dp).clip(RoundedCornerShape(22.dp))
-            .background(Color.White.copy(alpha = .09f)).border(1.dp, Color.White.copy(alpha = .12f), RoundedCornerShape(22.dp))
-            .clickable(onClick = importAudio).padding(horizontal = 20.dp), verticalAlignment = Alignment.CenterVertically) {
-            Text("↓", color = Color.White, fontSize = 25.sp)
-            Spacer(Modifier.width(14.dp))
-            Text("Importar canción", color = Color.White, fontSize = 17.sp, fontWeight = FontWeight.Medium)
-            Spacer(Modifier.weight(1f))
-            Text("›", color = Color.White, fontSize = 26.sp)
-        }
-    }
-}
-
-@Composable
-private fun Control(label: String, description: String, enabled: Boolean, color: Color, onClick: () -> Unit) {
-    Text(label, modifier = Modifier.size(55.dp).clickable(enabled = enabled, onClick = onClick)
-        .wrapContentSize(), color = if (enabled) color else color.copy(alpha = .4f), fontSize = 24.sp)
-}
-
-private fun formatTime(ms: Int): String {
-    val seconds = ms.coerceAtLeast(0) / 1000
-    return "%d:%02d".format(seconds / 60, seconds % 60)
 }

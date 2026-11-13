@@ -1,0 +1,14 @@
+package mx.musicalesdoris.reproductorlocalandroid.library.components.song
+
+import androidx.compose.runtime.Composable
+import mx.musicalesdoris.reproductorlocalandroid.PlayerTheme
+import mx.musicalesdoris.reproductorlocalandroid.Song
+import java.io.File
+
+@Composable
+fun SoniqSongRow(song: Song, selected: Boolean, artwork: File?, theme: PlayerTheme,
+                    onSelect: () -> Unit, onFavorite: () -> Unit, onDelete: () -> Unit,
+                    destructiveTitle: String, onMoveUp: (() -> Unit)?, onMoveDown: (() -> Unit)?) {
+    SongRowLayout(song, selected, artwork, theme, onSelect, onFavorite, onDelete,
+        destructiveTitle, onMoveUp, onMoveDown, "soniq")
+}

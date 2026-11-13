@@ -1,95 +1,107 @@
 package mx.musicalesdoris.reproductorlocalandroid.library
 
-import mx.musicalesdoris.reproductorlocalandroid.*
-import mx.musicalesdoris.reproductorlocalandroid.library.components.header.AppHeader
-import mx.musicalesdoris.reproductorlocalandroid.library.components.navigation.LibrarySectionNavigation
-import mx.musicalesdoris.reproductorlocalandroid.library.components.song.SongRow
-import mx.musicalesdoris.reproductorlocalandroid.library.components.miniplayer.MiniPlayer
-
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Text
-import androidx.compose.material3.OutlinedTextFieldDefaults
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.*
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
+import mx.musicalesdoris.reproductorlocalandroid.PlayerState
+import mx.musicalesdoris.reproductorlocalandroid.PlayerTheme
+import mx.musicalesdoris.reproductorlocalandroid.LibraryComponent
+import mx.musicalesdoris.reproductorlocalandroid.PlayerViewModel
+import mx.musicalesdoris.reproductorlocalandroid.Playlist
+import mx.musicalesdoris.reproductorlocalandroid.Song
+import mx.musicalesdoris.reproductorlocalandroid.library.components.header.AppHeader
+import mx.musicalesdoris.reproductorlocalandroid.library.components.navigation.LibrarySectionNavigation
+import mx.musicalesdoris.reproductorlocalandroid.library.components.miniplayer.MiniPlayer
+import mx.musicalesdoris.reproductorlocalandroid.library.sections.*
 
+/** Matches the iOS composition: one header, one navigation bar and one mini player. */
 @Composable
-fun LibraryScreen(
-    theme: PlayerTheme,
-    songs: List<Song>,
-    state: PlayerState,
-    player: PlayerViewModel,
-    themes: ThemeViewModel,
-    importAudio: () -> Unit
-) {
-    // La colección se observa para reconstruir la pieza cuando el usuario cambia su diseño.
-    val overrides by themes.componentOverrides.collectAsState()
+fun LibraryScreen(theme: PlayerTheme, songs: List<Song>, state: PlayerState, player: PlayerViewModel,
+                  importAudio: () -> Unit, onPlayer: () -> Unit, onThemes: () -> Unit,
+                  onProfile: () -> Unit, onEqualizer: () -> Unit, chooseCover: (String) -> Unit) {
+    val playlists by player.library.playlists.collectAsState()
     var section by remember { mutableStateOf(LibrarySection.SONGS) }
-    var query by remember { mutableStateOf("") }
+    val detailStack = remember { mutableStateListOf<Pair<String, String>>() }
+    var creating by remember { mutableStateOf(false) }
+    var editing by remember { mutableStateOf<Playlist?>(null) }
+    var choosingSongs by remember { mutableStateOf<String?>(null) }
+    var deletePlaylist by remember { mutableStateOf<Playlist?>(null) }
     val selected = songs.firstOrNull { it.id == state.selectedId }
 
-    Column(Modifier.fillMaxSize().background(theme.background)) {
-        AppHeader(themes.variantFor(LibraryComponent.HEADER, theme), theme, importAudio)
-        LibrarySectionNavigation(section, themes.variantFor(LibraryComponent.NAVIGATION, theme), theme) {
-            section = it
+    if (creating || editing != null) {
+        PlaylistEditorView(editing, player.library, theme) { creating = false; editing = null }
+    } else {
+        Column(Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(theme.topGlow.copy(alpha = .5f),
+            theme.background, theme.bottomGlow.copy(alpha = .35f))))) {
+            if (detailStack.isEmpty()) {
+                AppHeader(theme, importAudio, onPlayer, onThemes, onProfile, onEqualizer)
+                LibrarySectionNavigation(section, theme.variantFor(LibraryComponent.NAVIGATION), theme) { selectedSection ->
+                    section = selectedSection
+                    detailStack.clear()
+                }
+                Spacer(Modifier.height(8.dp))
+            }
+            Column(Modifier.weight(1f).padding(horizontal = if (theme.id == "soniq") 14.dp else 20.dp)) {
+                val detail = detailStack.lastOrNull()
+                if (detail != null) {
+                    DetailView(detail.first, detail.second, state, player, theme,
+                        onBack = { detailStack.removeAt(detailStack.lastIndex) },
+                        onEdit = { editing = it }, onAdd = { choosingSongs = it.id },
+                        onCover = chooseCover,
+                        onOpenAlbum = { detailStack.add("album" to it) })
+                } else when (section) {
+                    LibrarySection.SONGS -> SongsView(songs, state, player, theme)
+                    LibrarySection.FAVORITES -> FavoritesView(songs, state, player, theme)
+                    LibrarySection.PLAYLISTS -> PlaylistsView(player.library, playlists, theme,
+                        onCreate = { creating = true },
+                        onOpen = { detailStack.add("playlist" to it.id) },
+                        onEdit = { editing = it }, onDelete = { deletePlaylist = it })
+                    LibrarySection.ALBUMS -> AlbumsView(player.library, theme) { detailStack.add("album" to it.id) }
+                    LibrarySection.ARTISTS -> ArtistsView(player.library, theme) { detailStack.add("artist" to it.id) }
+                    LibrarySection.GENRES -> GenresView(player.library, theme) { detailStack.add("genre" to it) }
+                    LibrarySection.FOLDERS -> FoldersView(player.library, theme) { detailStack.add("folder" to it) }
+                }
+            }
+            MiniPlayer(selected, state, theme, player, onPlayer)
+            Spacer(Modifier.height(10.dp))
         }
-        Spacer(Modifier.height(8.dp))
-        Column(Modifier.weight(1f).padding(horizontal = 20.dp)) {
-            Text(section.heading, color = Color.White, fontSize = 30.sp, fontWeight = FontWeight.Bold,
-                modifier = Modifier.padding(top = 18.dp, bottom = 16.dp))
-            when (section) {
-                LibrarySection.SONGS, LibrarySection.FAVORITES -> {
-                    OutlinedTextField(query, { query = it }, label = { Text("Buscar canciones") },
-                        singleLine = true, modifier = Modifier.fillMaxWidth(),
-                        colors = OutlinedTextFieldDefaults.colors(
-                            focusedTextColor = Color.White, unfocusedTextColor = Color.White,
-                            focusedBorderColor = theme.accent, focusedLabelColor = theme.accent,
-                            unfocusedLabelColor = Color.White.copy(alpha = .65f)))
-                    Spacer(Modifier.height(12.dp))
-                    val visible = songs.filter { song ->
-                        (section != LibrarySection.FAVORITES || song.favorite) &&
-                            song.title.contains(query, ignoreCase = true)
-                    }
-                    if (visible.isEmpty()) {
-                        EmptyLibraryState(if (section == LibrarySection.FAVORITES) "Aún no tienes favoritos" else "No hay canciones", theme)
-                    } else {
-                        LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                            items(visible, key = { it.id }) { song ->
-                                SongRow(song, song.id == state.selectedId,
-                                    themes.variantFor(LibraryComponent.SONG, theme), theme,
-                                    onSelect = { player.select(song) },
-                                    onFavorite = { player.library.toggleFavorite(song.id) },
-                                    onDelete = { player.delete(song) })
-                            }
-                        }
+    }
+
+    choosingSongs?.let { id ->
+        val playlist = playlists.firstOrNull { it.id == id }
+        if (playlist != null) AlertDialog(onDismissRequest = { choosingSongs = null },
+            title = { Text("Añadir canciones") },
+            text = { LazyColumn(Modifier.heightIn(max = 400.dp)) {
+                items(songs, key = { it.id }) { song ->
+                    val included = song.id in playlist.songIds
+                    Row(Modifier.fillMaxWidth().clickable {
+                        player.library.setPlaylistSongs(id,
+                            if (included) playlist.songIds - song.id else playlist.songIds + song.id)
+                    }.padding(10.dp)) {
+                        Text(if (included) "☑" else "□", color = theme.accent)
+                        Spacer(Modifier.width(8.dp))
+                        Text(song.title, maxLines = 1)
                     }
                 }
-                LibrarySection.PLAYLISTS -> EmptyLibraryState("Aún no hay listas", theme)
-                LibrarySection.ALBUMS -> EmptyLibraryState("Aún no hay álbumes", theme)
-                LibrarySection.ARTISTS -> EmptyLibraryState("Aún no hay artistas", theme)
-            }
-        }
-        MiniPlayer(selected, state, themes.variantFor(LibraryComponent.MINI_PLAYER, theme), theme,
-            onTogglePlayback = player::togglePlayback)
-        Spacer(Modifier.height(10.dp))
+            } }, confirmButton = { TextButton(onClick = { choosingSongs = null }) { Text("Listo") } })
+        else choosingSongs = null
     }
-}
-
-@Composable
-private fun EmptyLibraryState(title: String, theme: PlayerTheme) {
-    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-            Text("♫", color = theme.accent, fontSize = 48.sp)
-            Text(title, color = Color.White, fontSize = 20.sp)
-            Text("Importa canciones para comenzar.", color = Color.White.copy(alpha = .65f))
-        }
+    deletePlaylist?.let { playlist ->
+        AlertDialog(onDismissRequest = { deletePlaylist = null }, title = { Text("Eliminar lista") },
+            text = { Text("¿Eliminar ${playlist.title}?") },
+            confirmButton = { TextButton(onClick = {
+                player.library.deletePlaylist(playlist.id)
+                deletePlaylist = null
+            }) { Text("Eliminar") } },
+            dismissButton = { TextButton(onClick = { deletePlaylist = null }) { Text("Cancelar") } })
     }
 }

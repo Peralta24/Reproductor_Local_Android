@@ -10,8 +10,12 @@ data class PlayerTheme(
     val id: String, val name: String, val description: String,
     val background: Color, val topGlow: Color, val bottomGlow: Color,
     val accent: Color, val secondaryAccent: Color, val corner: Int,
-    val componentDefaults: Map<LibraryComponent, String>
+    val componentDefaults: Map<LibraryComponent, String>,
+    val foreground: Color = Color.White, val muted: Color = Color.White.copy(alpha = .65f),
+    val surface: Color = Color.White.copy(alpha = .09f)
 ) {
+    fun variantFor(component: LibraryComponent): String = componentDefaults[component] ?: id
+
     companion object {
         val all = listOf(
             PlayerTheme("neon", "Neón", "Rosa y violeta sobre un atardecer",
@@ -21,7 +25,12 @@ data class PlayerTheme(
             PlayerTheme("aurora", "Aurora", "Verde y azul con estilo sereno",
                 Color(0xFF061C26), Color(0xFF24B89E), Color(0xFF2E66C7),
                 Color(0xFF4DE0BF), Color(0xFF458FEB), 36,
-                LibraryComponent.entries.associateWith { "aurora" })
+                LibraryComponent.entries.associateWith { "aurora" }),
+            PlayerTheme("soniq", "Soniq", "Azul claro con reproductor digital",
+                Color(0xFFC7DBF5), Color(0xFFEBF5FF), Color(0xFFADC9EF),
+                Color(0xFF1252E8), Color(0xFF4CC7F5), 24,
+                LibraryComponent.entries.associateWith { "soniq" },
+                Color(0xFF172638), Color(0xFF63758C), Color.White.copy(alpha = .66f))
         )
     }
 }
@@ -30,31 +39,13 @@ class ThemeViewModel(application: Application) : AndroidViewModel(application) {
     private val preferences = application.getSharedPreferences("themes", 0)
     private val _selectedId = MutableStateFlow(preferences.getString("selectedPlayerTheme", "neon") ?: "neon")
     val selectedId = _selectedId.asStateFlow()
-    private val _componentOverrides = MutableStateFlow(
-        LibraryComponent.entries.mapNotNull { component ->
-            preferences.getString("libraryComponentVariant.${component.key}", null)
-                ?.takeIf { value -> component.availableVariants.any { it.id == value } }
-                ?.let { component to it }
-        }.toMap()
-    )
-    val componentOverrides = _componentOverrides.asStateFlow()
-
-    fun variantFor(component: LibraryComponent, theme: PlayerTheme): String =
-        _componentOverrides.value[component]
-            ?: theme.componentDefaults[component]
-                ?.takeIf { value -> component.availableVariants.any { it.id == value } }
-            ?: component.availableVariants.first().id
-
-    fun setVariant(component: LibraryComponent, variantId: String?) {
-        if (variantId != null && component.availableVariants.none { it.id == variantId }) return
-        _componentOverrides.value = _componentOverrides.value.toMutableMap().apply {
-            if (variantId == null) remove(component) else put(component, variantId)
-        }
+    init {
         preferences.edit().apply {
-            val key = "libraryComponentVariant.${component.key}"
-            if (variantId == null) remove(key) else putString(key, variantId)
+            preferences.all.keys.filter { it.startsWith("libraryComponentVariant.") }.forEach(::remove)
         }.apply()
     }
+    fun variantFor(component: LibraryComponent, theme: PlayerTheme): String =
+        theme.variantFor(component)
     fun select(id: String) {
         if (PlayerTheme.all.none { it.id == id }) return
         _selectedId.value = id

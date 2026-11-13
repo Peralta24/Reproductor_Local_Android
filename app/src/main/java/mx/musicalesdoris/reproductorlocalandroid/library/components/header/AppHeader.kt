@@ -1,14 +1,15 @@
 package mx.musicalesdoris.reproductorlocalandroid.library.components.header
 
-import mx.musicalesdoris.reproductorlocalandroid.*
-import mx.musicalesdoris.reproductorlocalandroid.library.*
-
 import androidx.compose.runtime.Composable
+import mx.musicalesdoris.reproductorlocalandroid.PlayerTheme
+import mx.musicalesdoris.reproductorlocalandroid.LibraryComponent
 
 @Composable
-fun AppHeader(variantId: String, theme: PlayerTheme, onImport: () -> Unit) {
-    when (variantId) {
-        "aurora" -> AuroraAppHeader(theme, onImport)
-        else -> NeonAppHeader(theme, onImport)
+fun AppHeader(theme: PlayerTheme, onImport: () -> Unit, onPlayer: () -> Unit,
+              onThemes: () -> Unit, onProfile: () -> Unit, onEqualizer: () -> Unit) {
+    when (theme.variantFor(LibraryComponent.HEADER)) {
+        "aurora" -> AuroraAppHeader(theme, onImport, onPlayer, onThemes)
+        "soniq" -> SoniqAppHeader(theme, onImport, onProfile, onEqualizer)
+        else -> NeonAppHeader(theme, onImport, onPlayer, onThemes)
     }
 }

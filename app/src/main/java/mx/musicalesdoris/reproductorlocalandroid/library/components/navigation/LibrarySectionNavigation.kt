@@ -11,6 +11,7 @@ fun LibrarySectionNavigation(section: LibrarySection, variantId: String, theme: 
     when (variantId) {
         "aurora" -> AuroraSectionNavigation(section, theme, onSelect)
         "segmented" -> SegmentedSectionNavigation(section, theme, onSelect)
+        "soniq" -> SoniqSectionNavigation(section, theme, onSelect)
         else -> NeonSectionNavigation(section, theme, onSelect)
     }
 }
