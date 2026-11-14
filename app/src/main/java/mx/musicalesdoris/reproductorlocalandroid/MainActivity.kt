@@ -34,6 +34,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import mx.musicalesdoris.reproductorlocalandroid.library.LibraryScreen
+import mx.musicalesdoris.reproductorlocalandroid.library.LibrarySection
 import mx.musicalesdoris.reproductorlocalandroid.library.components.miniplayer.MiniPlayer
 import mx.musicalesdoris.reproductorlocalandroid.player.ThemedPlayerScreen
 import mx.musicalesdoris.reproductorlocalandroid.ui.theme.ReproductorLocalAndroidTheme
@@ -43,6 +44,7 @@ import mx.musicalesdoris.reproductorlocalandroid.ui.theme.SoniqPalette
 class MainActivity : ComponentActivity() {
     private val player: PlayerViewModel by viewModels()
     private var requestedScreen by mutableStateOf("library")
+    private var screenRequestId by mutableStateOf(0)
     private val themes: ThemeViewModel by viewModels()
     private val importer = registerForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
         if (uris.isNotEmpty()) player.importSongs(uris)
@@ -74,7 +76,7 @@ class MainActivity : ComponentActivity() {
                 dynamicColor = false,
                 soniq = theme.id == "soniq"
             ) {
-                AppScreen(player, themes, theme, requestedScreen, { importer.launch(arrayOf("audio/*")) }) { id ->
+                AppScreen(player, themes, theme, requestedScreen, screenRequestId, { importer.launch(arrayOf("audio/*")) }) { id ->
                     coverPlaylistId = id
                     coverImporter.launch(arrayOf("image/*"))
                 }
@@ -87,7 +89,10 @@ class MainActivity : ComponentActivity() {
     }
     private fun handleAction(intent: Intent?) {
         when (intent?.action) {
-            "mx.musicalesdoris.OPEN_PLAYER" -> requestedScreen = "player"
+            "mx.musicalesdoris.OPEN_PLAYER" -> {
+                requestedScreen = "player"
+                screenRequestId++
+            }
             "mx.musicalesdoris.PREVIOUS" -> player.previousSong()
             "mx.musicalesdoris.TOGGLE" -> player.togglePlayback()
             "mx.musicalesdoris.NEXT" -> player.nextSong()
@@ -96,46 +101,64 @@ class MainActivity : ComponentActivity() {
 }
 @Composable
 private fun AppScreen(player: PlayerViewModel, themes: ThemeViewModel, theme: PlayerTheme,
-                      requestedScreen: String, importAudio: () -> Unit, chooseCover: (String) -> Unit) {
+                      requestedScreen: String, screenRequestId: Int,
+                      importAudio: () -> Unit, chooseCover: (String) -> Unit) {
     val songs by player.library.songs.collectAsState()
     val state by player.state.collectAsState()
     val libraryError by player.library.error.collectAsState()
     val selectedId by themes.selectedId.collectAsState()
     var screen by remember { mutableStateOf(requestedScreen) }
-    LaunchedEffect(requestedScreen) { screen = requestedScreen }
+    val screenHistory = remember { mutableStateListOf<String>() }
+    val librarySection = remember { mutableStateOf(LibrarySection.SONGS) }
+    val libraryDetails = remember { mutableStateListOf<Pair<String, String>>() }
+    val navigateTo: (String) -> Unit = { destination ->
+        if (destination != screen) {
+            screenHistory.add(screen)
+            screen = destination
+        }
+    }
+    val navigateBack: () -> Unit = {
+        screen = if (screenHistory.isNotEmpty()) screenHistory.removeAt(screenHistory.lastIndex) else "library"
+    }
+    LaunchedEffect(requestedScreen, screenRequestId) {
+        if (requestedScreen != screen) navigateTo(requestedScreen)
+    }
     val error = state.error ?: libraryError
     val selectedSong = songs.firstOrNull { it.id == state.selectedId }
-    BackHandler(screen != "library") { screen = "library" }
+    BackHandler(enabled = screen != "library" && error == null) { navigateBack() }
     if (error != null) AlertDialog(onDismissRequest = player::clearError,
         title = { Text("Error") }, text = { Text(error) },
         confirmButton = { TextButton(onClick = player::clearError) { Text("Aceptar") } })
     Box(Modifier.fillMaxSize().background(theme.background).statusBarsPadding().navigationBarsPadding()) {
         if (screen == "library") {
             LibraryScreen(theme, songs, state, player, importAudio,
-                onPlayer = { screen = "player" }, onThemes = { screen = "themes" },
-                onProfile = { screen = "profile" }, onEqualizer = { screen = "equalizer" }, chooseCover = chooseCover)
+                section = librarySection.value, onSectionChange = { librarySection.value = it },
+                detailStack = libraryDetails,
+                systemBackEnabled = error == null,
+                onPlayer = { navigateTo("player") }, onThemes = { navigateTo("themes") },
+                onProfile = { navigateTo("profile") }, onEqualizer = { navigateTo("equalizer") }, chooseCover = chooseCover)
         } else if (screen == "player") {
             ThemedPlayerScreen(theme, selectedSong, state, player,
-                onClose = { screen = "library" }, importAudio = importAudio)
+                onClose = navigateBack, importAudio = importAudio)
         } else {
             Column(Modifier.fillMaxSize()) {
                 Column(Modifier.weight(1f)) {
                     when (screen) {
                         "themes" -> Column {
-                            ScreenHeader("Temas", theme) { screen = "library" }
+                            ScreenHeader("Temas", theme, navigateBack)
                             ThemesScreen(theme, selectedId, themes)
                         }
                         "profile" -> Column {
-                            ScreenHeader("Perfil", theme) { screen = "library" }
-                            ProfileScreen(songs, player.library.playlists.value.size) { screen = "themes" }
+                            ScreenHeader("Perfil", theme, navigateBack)
+                            ProfileScreen(songs, player.library.playlists.value.size) { navigateTo("themes") }
                         }
                         "equalizer" -> Column(Modifier.fillMaxSize()) {
-                            ScreenHeader("Ecualizador", theme) { screen = "library" }
+                            ScreenHeader("Ecualizador", theme, navigateBack)
                             EqualizerScreen()
                         }
                     }
                 }
-                MiniPlayer(selectedSong, state, theme, player) { screen = "player" }
+                MiniPlayer(selectedSong, state, theme, player) { navigateTo("player") }
             }
         }
     }

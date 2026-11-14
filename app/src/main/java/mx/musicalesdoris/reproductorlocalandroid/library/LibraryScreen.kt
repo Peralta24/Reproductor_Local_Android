@@ -8,7 +8,9 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.activity.compose.BackHandler
 import androidx.compose.runtime.*
+import androidx.compose.runtime.snapshots.SnapshotStateList
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.unit.dp
@@ -28,16 +30,21 @@ import mx.musicalesdoris.reproductorlocalandroid.ui.theme.SoniqPalette
 @Composable
 fun LibraryScreen(theme: PlayerTheme, songs: List<Song>, state: PlayerState, player: PlayerViewModel,
                   importAudio: () -> Unit, onPlayer: () -> Unit, onThemes: () -> Unit,
-                  onProfile: () -> Unit, onEqualizer: () -> Unit, chooseCover: (String) -> Unit) {
+                  onProfile: () -> Unit, onEqualizer: () -> Unit, chooseCover: (String) -> Unit,
+                  section: LibrarySection, onSectionChange: (LibrarySection) -> Unit,
+                  detailStack: SnapshotStateList<Pair<String, String>>, systemBackEnabled: Boolean) {
     val playlists by player.library.playlists.collectAsState()
-    var section by remember { mutableStateOf(LibrarySection.SONGS) }
-    val detailStack = remember { mutableStateListOf<Pair<String, String>>() }
     var creating by remember { mutableStateOf(false) }
     var editing by remember { mutableStateOf<Playlist?>(null) }
     var importing by remember { mutableStateOf(false) }
     var choosingSongs by remember { mutableStateOf<String?>(null) }
     var deletePlaylist by remember { mutableStateOf<Playlist?>(null) }
     val selected = songs.firstOrNull { it.id == state.selectedId }
+
+    BackHandler(enabled = systemBackEnabled && detailStack.isNotEmpty() && !creating && editing == null && !importing &&
+        choosingSongs == null && deletePlaylist == null) {
+        detailStack.removeAt(detailStack.lastIndex)
+    }
 
     Column(Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(
             if (theme.id == "soniq") SoniqPalette.pageTop else theme.topGlow,
@@ -53,7 +60,7 @@ fun LibraryScreen(theme: PlayerTheme, songs: List<Song>, state: PlayerState, pla
                 if (detailStack.isEmpty()) {
                     AppHeader(theme, { importing = true }, onPlayer, onThemes, onProfile, onEqualizer)
                     LibrarySectionNavigation(section, theme.variantFor(LibraryComponent.NAVIGATION), theme) { selectedSection ->
-                        section = selectedSection
+                        onSectionChange(selectedSection)
                         detailStack.clear()
                     }
                 }

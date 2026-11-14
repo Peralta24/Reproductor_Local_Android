@@ -1,5 +1,7 @@
 package mx.musicalesdoris.reproductorlocalandroid.player
 
+import android.media.AudioDeviceInfo
+import android.os.Build
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -13,6 +15,9 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.tween
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -21,6 +26,11 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.rememberTextMeasurer
 import mx.musicalesdoris.reproductorlocalandroid.library.components.artwork.SoniqCdCase
 import mx.musicalesdoris.reproductorlocalandroid.ui.theme.SoniqBodyFont
 import mx.musicalesdoris.reproductorlocalandroid.ui.theme.SoniqHeadingFont
@@ -29,10 +39,16 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.role
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import android.animation.ValueAnimator
+import kotlinx.coroutines.delay
 import mx.musicalesdoris.reproductorlocalandroid.PlayerState
 import mx.musicalesdoris.reproductorlocalandroid.PlayerTheme
 import mx.musicalesdoris.reproductorlocalandroid.PlayerViewModel
@@ -48,6 +64,22 @@ fun SoniqPlayerScreen(theme: PlayerTheme, song: Song?, state: PlayerState,
     val marqueeEnabled = ValueAnimator.areAnimatorsEnabled()
     var menuExpanded by remember { mutableStateOf(false) }
     var showQueue by remember { mutableStateOf(false) }
+    var showAudioOutput by remember { mutableStateOf(false) }
+    var activeAudioOutput by remember(player) { mutableStateOf<AudioDeviceInfo?>(null) }
+    DisposableEffect(player) {
+        val routeSubscription = player.observeAudioOutputRouting { confirmedRoute ->
+            if (confirmedRoute != null) {
+                activeAudioOutput = confirmedRoute
+            } else {
+                val lastConfirmedRoute = activeAudioOutput
+                val stillConnected = lastConfirmedRoute != null && runCatching {
+                    player.availableAudioOutputs().any { it.isSameConnectedRoute(lastConfirmedRoute) }
+                }.getOrDefault(false)
+                if (!stillConnected) activeAudioOutput = null
+            }
+        }
+        onDispose { routeSubscription.close() }
+    }
     val queue = player.queueSongs()
     Column(Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(theme.topGlow, theme.background,
         theme.bottomGlow))).verticalScroll(rememberScrollState()).padding(horizontal = 20.dp, vertical = 13.dp),
@@ -76,14 +108,30 @@ fun SoniqPlayerScreen(theme: PlayerTheme, song: Song?, state: PlayerState,
             }
         }
         Spacer(Modifier.height(25.dp))
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-            Text("TU BIBLIOTECA / ${song?.album?.uppercase() ?: "ARCHIVO LOCAL"}", color = theme.muted, fontSize = 9.sp,
-                fontFamily = SoniqMonoFont, letterSpacing = .6.sp, maxLines = 1,
-                overflow = if (marqueeEnabled) TextOverflow.Clip else TextOverflow.Ellipsis,
-                modifier = Modifier.weight(1f).then(if (marqueeEnabled)
-                    Modifier.basicMarquee(initialDelayMillis = 1200, velocity = 24.dp) else Modifier))
-            Text("● EN EL DISPOSITIVO", color = theme.accent, fontSize = 8.sp,
-                fontFamily = SoniqMonoFont)
+        BoxWithConstraints(Modifier.fillMaxWidth()) {
+            val outputLabelMaxWidth = maxWidth * .55f
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                Text("TU BIBLIOTECA / ${song?.album?.uppercase() ?: "ARCHIVO LOCAL"}", color = theme.muted, fontSize = 9.sp,
+                    fontFamily = SoniqMonoFont, letterSpacing = .6.sp, maxLines = 1,
+                    overflow = if (marqueeEnabled) TextOverflow.Clip else TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f).then(if (marqueeEnabled)
+                        Modifier.basicMarquee(initialDelayMillis = 1200, velocity = 24.dp) else Modifier))
+                SoniqAudioOutputIndicator(
+                    route = activeAudioOutput,
+                    accent = theme.accent,
+                    marqueeEnabled = marqueeEnabled,
+                    maxLabelWidth = outputLabelMaxWidth,
+                    modifier = Modifier.clickable { showAudioOutput = true }
+                        .semantics(mergeDescendants = true) {
+                            role = Role.Button
+                            contentDescription = buildString {
+                                append("Seleccionar salida de audio")
+                                append(activeAudioOutput?.confirmedOutputLabel()
+                                    ?.let { ". Salida actual: $it" } ?: ". Salida actual no confirmada")
+                            }
+                        }
+                )
+            }
         }
         Spacer(Modifier.height(19.dp))
         BoxWithConstraints(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
@@ -159,6 +207,9 @@ fun SoniqPlayerScreen(theme: PlayerTheme, song: Song?, state: PlayerState,
         }
         Spacer(Modifier.height(32.dp))
     }
+    if (showAudioOutput) {
+        SoniqAudioOutputDialog(player, state.isPlaying) { showAudioOutput = false }
+    }
     if (showQueue) ModalBottomSheet(onDismissRequest = { showQueue = false }) {
         Text("Cola de reproducción", fontSize = 22.sp, fontWeight = FontWeight.Bold,
             modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp))
@@ -174,6 +225,105 @@ fun SoniqPlayerScreen(theme: PlayerTheme, song: Song?, state: PlayerState,
             }
         }
     }
+}
+
+@Composable
+private fun SoniqAudioOutputIndicator(
+    route: AudioDeviceInfo?,
+    accent: Color,
+    marqueeEnabled: Boolean,
+    maxLabelWidth: Dp,
+    modifier: Modifier = Modifier
+) {
+    val label = route?.confirmedOutputLabel() ?: "EN EL DISPOSITIVO"
+    val textStyle = TextStyle(fontFamily = SoniqMonoFont, fontSize = 8.sp, color = accent)
+    val textMeasurer = rememberTextMeasurer()
+    val density = LocalDensity.current
+    val fullTextWidthPx = remember(label, textMeasurer, textStyle, density) {
+        textMeasurer.measure(label, style = textStyle, softWrap = false, maxLines = 1)
+            .size.width.toFloat()
+    }
+    val fullTextWidth = with(density) { fullTextWidthPx.toDp() }
+    val scrollOffset = remember(label) { Animatable(0f) }
+    var viewportWidthPx by remember { mutableIntStateOf(0) }
+
+    LaunchedEffect(label, viewportWidthPx, fullTextWidthPx, marqueeEnabled) {
+        scrollOffset.snapTo(0f)
+        val distancePx = fullTextWidthPx - viewportWidthPx
+        if (!marqueeEnabled || distancePx <= 0f || viewportWidthPx <= 0) return@LaunchedEffect
+
+        val duration = (distancePx / density.density * 32f).toInt().coerceIn(850, 4_500)
+        while (true) {
+            delay(900)
+            scrollOffset.animateTo(-distancePx, tween(durationMillis = duration, easing = LinearEasing))
+            delay(1_100)
+            scrollOffset.animateTo(0f, tween(durationMillis = duration, easing = LinearEasing))
+            delay(450)
+        }
+    }
+
+    Row(
+        modifier = modifier.widthIn(max = maxLabelWidth),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text("● ", style = textStyle, maxLines = 1, softWrap = false)
+        BoxWithConstraints(
+            Modifier.weight(1f, fill = false).clipToBounds()
+                .onSizeChanged { viewportWidthPx = it.width }
+        ) {
+            Text(
+                text = label,
+                style = textStyle,
+                maxLines = 1,
+                softWrap = false,
+                overflow = TextOverflow.Clip,
+                modifier = Modifier.requiredWidth(fullTextWidth)
+                    .offset { IntOffset(-scrollOffset.value.toInt(), 0) }
+            )
+        }
+    }
+}
+
+private fun AudioDeviceInfo.confirmedOutputLabel(): String? {
+    if (type == AudioDeviceInfo.TYPE_BUILTIN_SPEAKER ||
+        (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && type == AudioDeviceInfo.TYPE_BUILTIN_SPEAKER_SAFE)) {
+        return "EN EL DISPOSITIVO"
+    }
+
+    val deviceName = productName.toString().trim().takeUnless {
+        it.isBlank() || it.equals("unknown", ignoreCase = true)
+    }
+    return when (type) {
+        AudioDeviceInfo.TYPE_BLUETOOTH_A2DP,
+        AudioDeviceInfo.TYPE_BLUETOOTH_SCO -> deviceName ?: "Bluetooth"
+        AudioDeviceInfo.TYPE_BLE_HEADSET,
+        AudioDeviceInfo.TYPE_BLE_SPEAKER,
+        AudioDeviceInfo.TYPE_BLE_BROADCAST -> deviceName ?: "Bluetooth LE"
+        AudioDeviceInfo.TYPE_WIRED_HEADPHONES -> deviceName ?: "Audífonos con cable"
+        AudioDeviceInfo.TYPE_WIRED_HEADSET -> deviceName ?: "Audífonos con cable y micrófono"
+        AudioDeviceInfo.TYPE_USB_DEVICE,
+        AudioDeviceInfo.TYPE_USB_ACCESSORY,
+        AudioDeviceInfo.TYPE_USB_HEADSET -> deviceName ?: "Salida USB"
+        AudioDeviceInfo.TYPE_HDMI,
+        AudioDeviceInfo.TYPE_HDMI_ARC,
+        AudioDeviceInfo.TYPE_HDMI_EARC -> deviceName ?: "Salida HDMI"
+        AudioDeviceInfo.TYPE_LINE_ANALOG,
+        AudioDeviceInfo.TYPE_LINE_DIGITAL -> deviceName ?: "Salida de línea"
+        AudioDeviceInfo.TYPE_DOCK -> deviceName ?: "Base de audio"
+        AudioDeviceInfo.TYPE_AUX_LINE -> deviceName ?: "Salida auxiliar"
+        AudioDeviceInfo.TYPE_HEARING_AID -> deviceName ?: "Audífono asistivo"
+        else -> null
+    }
+}
+
+private fun AudioDeviceInfo.isSameConnectedRoute(other: AudioDeviceInfo): Boolean {
+    if (type != other.type) return false
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+        val thisAddress = address.trim()
+        val otherAddress = other.address.trim()
+        if (thisAddress.isNotEmpty() && otherAddress.isNotEmpty()) return thisAddress == otherAddress
+    }
+    return id == other.id
 }
 
 @Composable
