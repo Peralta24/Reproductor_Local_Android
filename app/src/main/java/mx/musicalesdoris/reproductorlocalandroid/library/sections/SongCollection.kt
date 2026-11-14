@@ -2,7 +2,10 @@ package mx.musicalesdoris.reproductorlocalandroid.library.sections
 
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -26,11 +29,14 @@ import kotlinx.coroutines.delay
 @Composable
 fun SongCollection(songs: List<Song>, state: PlayerState, player: PlayerViewModel,
                    theme: PlayerTheme, emptyTitle: String = "No hay canciones",
-                   playlistId: String? = null, modifier: Modifier = Modifier) {
+                   playlistId: String? = null, modifier: Modifier = Modifier,
+                   listState: LazyListState? = null,
+                   headerContent: (@Composable () -> Unit)? = null) {
     var pendingDelete by remember { mutableStateOf<Song?>(null) }
     var songToAdd by remember { mutableStateOf<Song?>(null) }
     var addedToast by remember { mutableStateOf<String?>(null) }
     val playlists by player.library.playlists.collectAsState()
+    val effectiveListState = listState ?: rememberLazyListState()
     LaunchedEffect(addedToast) {
         if (addedToast != null) {
             delay(2600)
@@ -38,28 +44,32 @@ fun SongCollection(songs: List<Song>, state: PlayerState, player: PlayerViewMode
         }
     }
     Box(modifier.fillMaxSize()) {
-        if (songs.isEmpty()) {
-            Box(Modifier.fillMaxWidth().heightIn(min = 180.dp), contentAlignment = Alignment.Center) {
-                Text(emptyTitle, color = theme.muted)
-            }
-        } else LazyColumn(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(if (theme.id == "soniq") 2.dp else 8.dp)) {
-            items(songs, key = { it.id }) { song ->
-                val ids = playlistId?.let { id -> player.library.playlists.value.firstOrNull { it.id == id }?.songIds }.orEmpty()
-                val index = ids.indexOf(song.id)
-                SongRow(song, song.id == state.selectedId, player.library.artworkFor(song), theme,
-                    onSelect = { player.playCollection(songs, startingWith = song) },
-                    onFavorite = { player.library.toggleFavorite(song.id) },
-                    onDelete = {
-                        if (playlistId != null) player.library.setPlaylistSongs(playlistId, ids - song.id)
-                        else pendingDelete = song
-                    }, destructiveTitle = if (playlistId != null) "Quitar de la lista" else "Eliminar archivo",
-                    onMoveUp = if (playlistId != null && index > 0) ({
-                        player.library.setPlaylistSongs(playlistId, ids.toMutableList().apply { add(index - 1, removeAt(index)) })
-                    }) else null,
-                    onMoveDown = if (playlistId != null && index >= 0 && index < ids.lastIndex) ({
-                        player.library.setPlaylistSongs(playlistId, ids.toMutableList().apply { add(index + 1, removeAt(index)) })
-                    }) else null,
-                    onAddToPlaylist = { songToAdd = song })
+        LazyColumn(Modifier.fillMaxSize(), state = effectiveListState) {
+            headerContent?.let { content -> item(key = "collection-header") { content() } }
+            if (songs.isEmpty()) item(key = "collection-empty-state") {
+                Box(Modifier.fillMaxWidth().heightIn(min = 180.dp), contentAlignment = Alignment.Center) {
+                    Text(emptyTitle, color = theme.muted)
+                }
+            } else itemsIndexed(songs, key = { _, song -> song.id }) { itemIndex, song ->
+                Column(Modifier.fillMaxWidth()) {
+                    if (itemIndex > 0) Spacer(Modifier.height(if (theme.id == "soniq") 2.dp else 8.dp))
+                    val ids = playlistId?.let { id -> player.library.playlists.value.firstOrNull { it.id == id }?.songIds }.orEmpty()
+                    val playlistIndex = ids.indexOf(song.id)
+                    SongRow(song, song.id == state.selectedId, player.library.artworkFor(song), theme,
+                        onSelect = { player.playCollection(songs, startingWith = song) },
+                        onFavorite = { player.library.toggleFavorite(song.id) },
+                        onDelete = {
+                            if (playlistId != null) player.library.setPlaylistSongs(playlistId, ids - song.id)
+                            else pendingDelete = song
+                        }, destructiveTitle = if (playlistId != null) "Quitar de la lista" else "Eliminar archivo",
+                        onMoveUp = if (playlistId != null && playlistIndex > 0) ({
+                            player.library.setPlaylistSongs(playlistId, ids.toMutableList().apply { add(playlistIndex - 1, removeAt(playlistIndex)) })
+                        }) else null,
+                        onMoveDown = if (playlistId != null && playlistIndex >= 0 && playlistIndex < ids.lastIndex) ({
+                            player.library.setPlaylistSongs(playlistId, ids.toMutableList().apply { add(playlistIndex + 1, removeAt(playlistIndex)) })
+                        }) else null,
+                        onAddToPlaylist = { songToAdd = song })
+                }
             }
         }
         addedToast?.let { title ->

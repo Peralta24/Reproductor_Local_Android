@@ -26,9 +26,12 @@ import mx.musicalesdoris.reproductorlocalandroid.ui.theme.SoniqMonoFont
 @Composable
 fun FavoritesView(songs: List<Song>, state: PlayerState, player: PlayerViewModel, theme: PlayerTheme) {
     var newestFirst by remember { mutableStateOf(true) }
-    val favorites = songs.filter { it.favorite }.sortedBy { it.favoritedAt ?: it.importedAt }
-        .let { if (newestFirst) it.reversed() else it }
-    Column {
+    val favorites = remember(songs, newestFirst) {
+        songs.filter { it.favorite }.sortedBy { it.favoritedAt ?: it.importedAt }
+            .let { if (newestFirst) it.reversed() else it }
+    }
+    SongCollection(favorites, state, player, theme, "Aún no tienes favoritos", headerContent = {
+        Column(Modifier.fillMaxWidth()) {
         if (theme.id == "soniq") {
             Column(Modifier.fillMaxWidth().padding(top = 14.dp, bottom = 14.dp), horizontalAlignment = Alignment.CenterHorizontally) {
                 val art = favorites.firstOrNull()?.let { player.library.artworkFor(it) }
@@ -57,8 +60,8 @@ fun FavoritesView(songs: List<Song>, state: PlayerState, player: PlayerViewModel
             Text("Tus favoritos", color = theme.foreground, fontSize = 28.sp, fontWeight = FontWeight.Bold,
                 modifier = Modifier.padding(top = 18.dp, bottom = 16.dp))
         }
-        SongCollection(favorites, state, player, theme, "Aún no tienes favoritos")
-    }
+        }
+    })
 }
 
 @Composable
