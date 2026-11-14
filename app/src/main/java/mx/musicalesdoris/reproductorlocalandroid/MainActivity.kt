@@ -32,6 +32,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
@@ -106,6 +107,11 @@ class MainActivity : ComponentActivity() {
         super.onResume()
         if (ContextCompat.checkSelfPermission(this, requiredAudioPermission()) == PackageManager.PERMISSION_GRANTED)
             scanDeviceMusic()
+        else player.library.markDeviceMediaUnavailable()
+    }
+    override fun onStop() {
+        player.persistCurrentPlaybackState()
+        super.onStop()
     }
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
@@ -131,6 +137,7 @@ private fun AppScreen(player: PlayerViewModel, themes: ThemeViewModel, theme: Pl
     val songs by player.library.songs.collectAsState()
     val state by player.state.collectAsState()
     val libraryError by player.library.error.collectAsState()
+    val pendingRelinks by player.library.pendingRelinks.collectAsState()
     val selectedId by themes.selectedId.collectAsState()
     var screen by remember { mutableStateOf(requestedScreen) }
     val screenHistory = remember { mutableStateListOf<String>() }
@@ -158,6 +165,30 @@ private fun AppScreen(player: PlayerViewModel, themes: ThemeViewModel, theme: Pl
     if (error != null) AlertDialog(onDismissRequest = player::clearError,
         title = { Text("Error") }, text = { Text(error) },
         confirmButton = { TextButton(onClick = player::clearError) { Text("Aceptar") } })
+    else pendingRelinks.firstOrNull()?.let { pending ->
+        val textColor = if (theme.id == "soniq") SoniqPalette.ink else theme.foreground
+        val mutedColor = if (theme.id == "soniq") SoniqPalette.secondaryText else theme.muted
+        AlertDialog(
+            onDismissRequest = {
+                player.library.resolvePendingRelink(pending.librarySong.id, pending.importedSong.id, relink = false)
+            },
+            title = { Text("Coincidencia de biblioteca", color = textColor) },
+            text = { Text("El audio importado coincide exactamente con ${pending.librarySong.title}. ¿Quieres volver a vincularlo para recuperar sus favoritos y playlists?",
+                color = mutedColor) },
+            confirmButton = {
+                TextButton(onClick = {
+                    player.library.resolvePendingRelink(pending.librarySong.id, pending.importedSong.id, relink = true)
+                }) { Text("Vincular", color = if (theme.id == "soniq") SoniqPalette.electricBlue else theme.accent) }
+            },
+            dismissButton = {
+                TextButton(onClick = {
+                    player.library.resolvePendingRelink(pending.librarySong.id, pending.importedSong.id, relink = false)
+                }) { Text("Importar aparte", color = if (theme.id == "soniq") SoniqPalette.electricBlue else theme.accent) }
+            },
+            containerColor = if (theme.id == "soniq") Color(0xFFEAF2FB) else theme.background,
+            shape = RoundedCornerShape(18.dp)
+        )
+    }
     Box(Modifier.fillMaxSize().background(theme.background).statusBarsPadding().navigationBarsPadding()) {
         Box(Modifier.fillMaxSize().then(
             if (screen == "player") Modifier.clearAndSetSemantics {} else Modifier

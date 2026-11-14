@@ -52,7 +52,7 @@ fun PlaylistSongPicker(playlist: Playlist, songs: List<Song>, player: PlayerView
     val grouped = when (category) {
         "Artistas" -> songs.groupBy { it.artist?.takeIf(String::isNotBlank) ?: "Artista desconocido" }
         "Álbumes" -> songs.groupBy { it.album?.takeIf(String::isNotBlank) ?: "Álbum desconocido" }
-        "Carpetas" -> songs.groupBy { player.library.fileFor(it).parentFile?.name ?: "Carpeta local" }
+        "Carpetas" -> songs.groupBy(player.library::folderNameFor)
         else -> emptyMap()
     }
     val candidates = when {
@@ -85,7 +85,7 @@ fun PlaylistSongPicker(playlist: Playlist, songs: List<Song>, player: PlayerView
                         PickerCategory(label, when (label) {
                             "Artistas" -> songs.mapNotNull { it.artist?.takeIf(String::isNotBlank) }.distinct().size
                             "Álbumes" -> songs.mapNotNull { it.album?.takeIf(String::isNotBlank) }.distinct().size
-                            "Carpetas" -> songs.map { player.library.fileFor(it).parentFile?.name ?: "Carpeta local" }.distinct().size
+                            "Carpetas" -> songs.map(player.library::folderNameFor).distinct().size
                             else -> songs.size
                         }) { category = label }
                     }

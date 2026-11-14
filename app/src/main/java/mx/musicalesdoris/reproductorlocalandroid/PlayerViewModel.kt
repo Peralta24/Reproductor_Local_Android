@@ -20,6 +20,7 @@ import android.os.Handler
 import android.os.Build
 import android.os.Looper
 import android.os.PowerManager
+import android.os.SystemClock
 import android.util.Log
 import androidx.lifecycle.AndroidViewModel
 import kotlinx.coroutines.CoroutineScope
@@ -33,9 +34,88 @@ import kotlinx.coroutines.flow.asStateFlow
 data class PlayerState(
     val selectedId: String? = null, val isPlaying: Boolean = false,
     val repeat: Boolean = false, val shuffle: Boolean = false,
-    val queueIds: List<String>? = null, val volume: Float = .7f, val error: String? = null
+    val queueIds: List<String>? = null, val volume: Float = .7f, val error: String? = null,
+    val isPreparing: Boolean = false
 )
 data class PlaybackProgress(val currentMs: Int = 0, val durationMs: Int = 0)
+
+internal data class SavedPlaybackSnapshot(
+    val selectedSongId: String?,
+    val positionMs: Int,
+    val queueIds: List<String>?,
+    val shuffle: Boolean,
+    val repeat: Boolean,
+    val contentUri: String? = null,
+    val importSourceIdentity: String? = null,
+    val privateAudioFingerprint: String? = null,
+    val mediaStoreVolume: String? = null
+)
+
+internal fun restoredPlayerState(snapshot: SavedPlaybackSnapshot): PlayerState = PlayerState(
+    selectedId = snapshot.selectedSongId,
+    isPlaying = false,
+    repeat = snapshot.repeat,
+    shuffle = snapshot.shuffle,
+    queueIds = snapshot.queueIds
+)
+
+internal fun clampRestoredPosition(positionMs: Int, durationMs: Int): Int =
+    positionMs.coerceIn(0, durationMs.coerceAtLeast(0))
+
+private const val PLAYBACK_QUEUE_SEPARATOR = "\u001f"
+
+internal fun savedPlaybackSnapshot(
+    selectedSongId: String?, positionMs: Int, hasCustomQueue: Boolean,
+    serializedQueueIds: String?, shuffle: Boolean, repeat: Boolean,
+    contentUri: String? = null, importSourceIdentity: String? = null,
+    privateAudioFingerprint: String? = null, mediaStoreVolume: String? = null
+): SavedPlaybackSnapshot = SavedPlaybackSnapshot(
+    selectedSongId = selectedSongId,
+    positionMs = positionMs.coerceAtLeast(0),
+    queueIds = if (!hasCustomQueue) null else serializedQueueIds
+        ?.takeIf(String::isNotEmpty)?.split(PLAYBACK_QUEUE_SEPARATOR) ?: emptyList(),
+    shuffle = shuffle,
+    repeat = repeat,
+    contentUri = contentUri,
+    importSourceIdentity = importSourceIdentity,
+    privateAudioFingerprint = privateAudioFingerprint,
+    mediaStoreVolume = mediaStoreVolume
+)
+
+internal fun serializePlaybackQueue(queueIds: List<String>?): String? =
+    queueIds?.joinToString(PLAYBACK_QUEUE_SEPARATOR)
+
+internal fun playbackIdentitySnapshot(song: Song, positionMs: Int = 0): SavedPlaybackSnapshot =
+    SavedPlaybackSnapshot(
+        selectedSongId = song.id,
+        positionMs = positionMs.coerceAtLeast(0),
+        queueIds = null,
+        shuffle = false,
+        repeat = false,
+        contentUri = song.contentUri,
+        importSourceIdentity = song.importSourceIdentity ?: song.contentUri?.let {
+            mediaStoreIdentity(it, song.fileName, song.sizeBytes, song.importedAt)
+        },
+        privateAudioFingerprint = song.privateAudioFingerprint,
+        mediaStoreVolume = song.mediaStoreVolume
+    )
+
+internal fun resolveSavedSongId(snapshot: SavedPlaybackSnapshot, songs: List<Song>): String? {
+    songs.firstOrNull { it.id == snapshot.selectedSongId }?.let { return it.id }
+    if (snapshot.contentUri != null) {
+        songs.firstOrNull { song -> song.contentUri == snapshot.contentUri &&
+            (snapshot.mediaStoreVolume == null || song.mediaStoreVolume == snapshot.mediaStoreVolume) }?.let { return it.id }
+    }
+    if (snapshot.importSourceIdentity != null) {
+        songs.firstOrNull { it.importSourceIdentity == snapshot.importSourceIdentity &&
+            (snapshot.privateAudioFingerprint == null || it.privateAudioFingerprint == snapshot.privateAudioFingerprint) }
+            ?.let { return it.id }
+    }
+    val fingerprintMatches = snapshot.privateAudioFingerprint?.let { fingerprint ->
+        songs.filter { it.privateAudioFingerprint == fingerprint }
+    }.orEmpty()
+    return fingerprintMatches.singleOrNull()?.id
+}
 
 class PlaybackEngine private constructor(private val application: Application) {
     companion object {
@@ -47,10 +127,30 @@ class PlaybackEngine private constructor(private val application: Application) {
     }
     val library = SongLibrary(application)
     private val preferences = application.getSharedPreferences("player", 0)
+    private val restoredSnapshot = readSavedPlaybackSnapshot()
+    private fun readSavedPlaybackSnapshot() = savedPlaybackSnapshot(
+        selectedSongId = preferences.getString("selectedSongID", null),
+        positionMs = preferences.getInt("positionMs", 0),
+        hasCustomQueue = preferences.getBoolean("hasCustomQueue", false),
+        serializedQueueIds = preferences.getString("queueIds", null),
+        shuffle = preferences.getBoolean("shuffle", false),
+        repeat = preferences.getBoolean("repeat", false),
+        contentUri = preferences.getString("selectedContentUri", null),
+        importSourceIdentity = preferences.getString("selectedImportSourceIdentity", null),
+        privateAudioFingerprint = preferences.getString("selectedAudioFingerprint", null),
+        mediaStoreVolume = preferences.getString("selectedMediaStoreVolume", null)
+    )
+    private val resolvedRestoredSongId = resolveSavedSongId(restoredSnapshot, library.songs.value)
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
-    private val _state = MutableStateFlow(PlayerState())
+    private val _state = MutableStateFlow(restoredPlayerState(restoredSnapshot).copy(
+        selectedId = resolvedRestoredSongId ?: restoredSnapshot.selectedSongId
+    ))
     val state = _state.asStateFlow()
-    private val _progress = MutableStateFlow(PlaybackProgress())
+    private val _progress = MutableStateFlow(PlaybackProgress(
+        currentMs = restoredSnapshot.positionMs,
+        durationMs = library.songs.value.firstOrNull { it.id == _state.value.selectedId }
+            ?.durationMs?.coerceIn(0, Int.MAX_VALUE.toLong())?.toInt() ?: 0
+    ))
     val progress = _progress.asStateFlow()
     private val audioManager = application.getSystemService(AudioManager::class.java)
     private val diagnosticLoggingEnabled: Boolean
@@ -73,12 +173,13 @@ class PlaybackEngine private constructor(private val application: Application) {
         isActive = true
     }
     private var mediaPlayer: MediaPlayer? = null
-    private var playerReady = false
+    private val playbackPhase = PlaybackPhaseTracker()
     private var playWhenPrepared = false
     private var publishedMetadataKey: String? = null
     private var queueCacheCatalog: List<Song>? = null
     private var queueCacheIds: List<String>? = null
     private var queueCache: List<Song> = emptyList()
+    private var knownSongsById = library.songs.value.associateBy { it.id }
     private var resumeAfterTransientFocusLoss = false
     private var duckedForAudioFocus = false
     private var preferredOutputDeviceId: Int? = null
@@ -96,15 +197,25 @@ class PlaybackEngine private constructor(private val application: Application) {
         }
     }
     private var hasStartedPlayback = false
+    private var lastProgressPersistedAtMs = 0L
     private var currentArtwork: android.graphics.Bitmap? = null
     private var artworkRequestKey: String? = null
     private val handler = Handler(Looper.getMainLooper())
     private val ticker = object : Runnable {
         override fun run() {
-            mediaPlayer?.let { player ->
+            val player = mediaPlayer ?: return
+            if (!playbackPhase.canControlPlayer) return
+            try {
                 _progress.value = PlaybackProgress(player.currentPosition, player.duration.coerceAtLeast(0))
                 publishSession()
+                val now = SystemClock.elapsedRealtime()
+                if (_state.value.isPlaying && now - lastProgressPersistedAtMs >= 5_000L) {
+                    persistPlaybackState(_progress.value.currentMs)
+                    lastProgressPersistedAtMs = now
+                }
                 handler.postDelayed(this, 1000)
+            } catch (exception: IllegalStateException) {
+                handleMediaPlayerError(player, "Error de audio: ${exception.localizedMessage ?: "estado inválido"}")
             }
         }
     }
@@ -112,15 +223,31 @@ class PlaybackEngine private constructor(private val application: Application) {
     init {
         notifications.createNotificationChannel(NotificationChannel(channelId, "Reproducción",
             NotificationManager.IMPORTANCE_LOW))
-        val saved = preferences.getString("selectedSongID", null)
-        val initial = library.songs.value.firstOrNull { it.id == saved } ?: library.songs.value.firstOrNull()
-        if (initial != null) select(initial, autoplay = false)
         scope.launch {
             library.songs.collect { songs ->
+                val previousById = knownSongsById
+                val currentState = _state.value
+                fun resolveId(id: String): String {
+                    if (songs.any { it.id == id }) return id
+                    val snapshot = previousById[id]?.let { playbackIdentitySnapshot(it) }
+                        ?: readSavedPlaybackSnapshot().takeIf { it.selectedSongId == id }
+                        ?: return id
+                    return resolveSavedSongId(snapshot, songs) ?: id
+                }
+                val resolvedSelectedId = currentState.selectedId?.let(::resolveId)
+                val resolvedQueueIds = currentState.queueIds?.map(::resolveId)
+                val identityChanged = resolvedSelectedId != currentState.selectedId || resolvedQueueIds != currentState.queueIds
+                if (identityChanged) {
+                    _state.value = currentState.copy(selectedId = resolvedSelectedId, queueIds = resolvedQueueIds)
+                    persistPlaybackState(_progress.value.currentMs)
+                }
+                knownSongsById = songs.associateBy { it.id }
                 val selected = songs.firstOrNull { it.id == _state.value.selectedId }
                 if (selected != null) publishArtwork(selected)
+                publishSession(identityChanged)
             }
         }
+        publishSession(true)
     }
 
     fun selectedSong(songs: List<Song>): Song? = songs.firstOrNull { it.id == _state.value.selectedId }
@@ -135,11 +262,19 @@ class PlaybackEngine private constructor(private val application: Application) {
             queueCache = it
         }
     }
-    fun select(song: Song, autoplay: Boolean = true, preserveQueue: Boolean = false) {
+    fun select(song: Song, autoplay: Boolean = true, preserveQueue: Boolean = false,
+               resumePositionMs: Int = 0) {
+        if (!song.mediaAvailable) {
+            _state.value = _state.value.copy(error = "Esta canción no está disponible ahora. Puedes quitarla de la biblioteca desde su menú.")
+            return
+        }
         if (library.songs.value.none { it.id == song.id }) return
         releasePlayer()
         try {
-            val player = MediaPlayer().apply {
+            val player = MediaPlayer()
+            mediaPlayer = player
+            playbackPhase.beginPreparation()
+            player.apply {
                 setAudioAttributes(attributes)
                 setWakeMode(application, PowerManager.PARTIAL_WAKE_LOCK)
                 val playbackVolume = _state.value.volume * focusVolumeMultiplier()
@@ -147,54 +282,68 @@ class PlaybackEngine private constructor(private val application: Application) {
                 setDataSource(application, library.uriFor(song))
                 setOnCompletionListener { onSongEnded() }
                 setOnPreparedListener { prepared ->
-                    if (mediaPlayer === prepared) {
-                        playerReady = true
-                        _progress.value = PlaybackProgress(0, prepared.duration.coerceAtLeast(0))
-                        publishSession(true)
-                        handler.post(ticker)
-                        if (playWhenPrepared) play()
+                    if (mediaPlayer === prepared && playbackPhase.onPrepared()) {
+                        try {
+                            _state.value = _state.value.copy(isPreparing = false)
+                            attachRoutingListenerIfNeeded()
+                            applyPreferredOutput(prepared)
+                            applyPlayerVolume()
+                            val duration = prepared.duration.coerceAtLeast(0)
+                            val target = clampRestoredPosition(resumePositionMs, duration)
+                            if (target > 0) prepared.seekTo(target)
+                            _progress.value = PlaybackProgress(target, duration)
+                            persistPlaybackState(target)
+                            publishSession(true)
+                            handler.post(ticker)
+                            if (playWhenPrepared) play()
+                        } catch (exception: Exception) {
+                            handleMediaPlayerError(prepared, "Error de audio: ${exception.localizedMessage}")
+                        }
                     }
                 }
                 setOnErrorListener { failed, what, extra ->
-                    if (mediaPlayer === failed) {
-                        playerReady = false
-                        playWhenPrepared = false
-                        _state.value = _state.value.copy(error = "Error de audio ($what/$extra)")
-                    }
+                    handleMediaPlayerError(failed, "Error de audio ($what/$extra)")
                     true
                 }
             }
-            mediaPlayer = player
             playWhenPrepared = autoplay
-            preferences.edit().putString("selectedSongID", song.id).apply()
             _state.value = _state.value.copy(selectedId = song.id, isPlaying = false,
                 queueIds = if (preserveQueue) _state.value.queueIds else null,
-                error = null)
-            _progress.value = PlaybackProgress()
+                error = null, isPreparing = true)
+            _progress.value = PlaybackProgress(resumePositionMs.coerceAtLeast(0),
+                song.durationMs?.coerceIn(0, Int.MAX_VALUE.toLong())?.toInt() ?: 0)
+            persistPlaybackState(_progress.value.currentMs)
             currentArtwork = null
             artworkRequestKey = null
             publishedMetadataKey = null
             publishSession(true)
             publishArtwork(song)
             player.prepareAsync()
-            applyPreferredOutput(player)
-            attachRoutingListenerIfNeeded()
             logAudioRouteSnapshot("player_preparing")
         } catch (exception: Exception) {
-            releasePlayer()
-            _state.value = _state.value.copy(error = "Error de audio: ${exception.localizedMessage}")
+            playbackPhase.onError()
+            releasePlayer(preserveErrorPhase = playbackPhase.phase == PlaybackPhase.ERROR)
+            resumeAfterTransientFocusLoss = false
+            duckedForAudioFocus = false
+            hasStartedPlayback = false
+            audioManager.abandonAudioFocusRequest(focusRequest)
+            PlaybackService.stopForegroundPlayback()
+            _state.value = _state.value.copy(isPlaying = false, isPreparing = false,
+                error = "Error de audio: ${exception.localizedMessage}")
+            publishSession(true)
         }
     }
     fun playCollection(songs: List<Song>, shuffled: Boolean = false, startingWith: Song? = null) {
         val libraryIds = library.songs.value.mapTo(HashSet()) { it.id }
-        val available = songs.filter { it.id in libraryIds }
+        val available = songs.filter { it.id in libraryIds && it.mediaAvailable }
         if (available.isEmpty()) return
         _state.value = _state.value.copy(queueIds = available.map { it.id }, shuffle = shuffled)
+        persistPlaybackState(0)
         select(startingWith?.takeIf { it in available } ?: if (shuffled) available.random() else available.first(),
             preserveQueue = true)
     }
     fun nextSong() {
-        val queue = queueSongs()
+        val queue = queueSongs().filter { it.mediaAvailable }
         val current = _state.value.selectedId
         val next = if (_state.value.shuffle) queue.filterNot { it.id == current }.randomOrNull()
             else queue.getOrNull(queue.indexOfFirst { it.id == current } + 1)
@@ -202,7 +351,7 @@ class PlaybackEngine private constructor(private val application: Application) {
     }
     fun previousSong() {
         if (_progress.value.currentMs > 3000) { seek(0); return }
-        val queue = queueSongs()
+        val queue = queueSongs().filter { it.mediaAvailable }
         val index = queue.indexOfFirst { it.id == _state.value.selectedId }
         if (index > 0) select(queue[index - 1], preserveQueue = true) else seek(0)
     }
@@ -211,10 +360,14 @@ class PlaybackEngine private constructor(private val application: Application) {
         try {
             if (mediaPlayer == null) {
                 val selected = library.songs.value.firstOrNull { it.id == _state.value.selectedId } ?: return
-                select(selected, autoplay = true, preserveQueue = true)
+                if (!selected.mediaAvailable) {
+                    _state.value = _state.value.copy(error = "Esta canción no está disponible ahora. Puedes intentarlo de nuevo cuando vuelva a estar accesible.")
+                    return
+                }
+                select(selected, autoplay = true, preserveQueue = true, resumePositionMs = _progress.value.currentMs)
                 return
             }
-            if (!playerReady) {
+            if (!playbackPhase.canControlPlayer) {
                 playWhenPrepared = true
                 return
             }
@@ -231,25 +384,70 @@ class PlaybackEngine private constructor(private val application: Application) {
         resumeAfterTransientFocusLoss = false
         duckedForAudioFocus = false
         playWhenPrepared = false
-        if (playerReady) mediaPlayer?.pause()
+        if (playbackPhase.phase == PlaybackPhase.PLAYING) {
+            val current = mediaPlayer
+            try {
+                val position = current?.currentPosition
+                current?.pause()
+                playbackPhase.onPlaybackPaused()
+                if (position != null) _progress.value = _progress.value.copy(currentMs = position)
+            } catch (exception: IllegalStateException) {
+                current?.let { handleMediaPlayerError(it, "Error de audio: ${exception.localizedMessage}") }
+            }
+        }
         applyPlayerVolume()
         _state.value = _state.value.copy(isPlaying = false)
         notifyOutputRoutingObservers()
         publishSession(true)
+        persistPlaybackState(_progress.value.currentMs)
         audioManager.abandonAudioFocusRequest(focusRequest)
         PlaybackService.stopForegroundPlayback()
     }
     fun seek(ms: Int) {
-        if (!playerReady) return
+        if (!playbackPhase.canControlPlayer) return
         val target = ms.coerceIn(0, _progress.value.durationMs)
-        mediaPlayer?.seekTo(target)
+        val current = mediaPlayer ?: return
+        try {
+            current.seekTo(target)
+        } catch (exception: IllegalStateException) {
+            handleMediaPlayerError(current, "Error de audio: ${exception.localizedMessage}")
+            return
+        }
         _progress.value = _progress.value.copy(currentMs = target)
         publishSession(true)
+        persistPlaybackState(target)
     }
     fun skip(ms: Int) = seek(_progress.value.currentMs + ms)
-    fun toggleRepeat() { _state.value = _state.value.copy(repeat = !_state.value.repeat) }
-    fun toggleShuffle() { _state.value = _state.value.copy(shuffle = !_state.value.shuffle) }
+    fun toggleRepeat() { _state.value = _state.value.copy(repeat = !_state.value.repeat); persistPlaybackState() }
+    fun toggleShuffle() { _state.value = _state.value.copy(shuffle = !_state.value.shuffle); persistPlaybackState() }
     fun toggleFavorite() { _state.value.selectedId?.let(library::toggleFavorite) }
+    private fun persistPlaybackState(positionMs: Int? = null) {
+        val currentPosition = positionMs ?: runCatching {
+            mediaPlayer?.takeIf { playbackPhase.canControlPlayer }?.currentPosition
+        }.getOrNull() ?: _progress.value.currentMs
+        val current = _state.value
+        val selectedSong = library.songs.value.firstOrNull { it.id == current.selectedId }
+        preferences.edit().apply {
+            if (current.selectedId == null) remove("selectedSongID")
+            else putString("selectedSongID", current.selectedId)
+            putString("selectedContentUri", selectedSong?.contentUri)
+            putString("selectedImportSourceIdentity", selectedSong?.let { song ->
+                song.importSourceIdentity ?: song.contentUri?.let {
+                    mediaStoreIdentity(it, song.fileName, song.sizeBytes, song.importedAt)
+                }
+            })
+            putString("selectedAudioFingerprint", selectedSong?.privateAudioFingerprint)
+            putString("selectedMediaStoreVolume", selectedSong?.mediaStoreVolume)
+            putInt("positionMs", currentPosition.coerceAtLeast(0))
+            putBoolean("hasCustomQueue", current.queueIds != null)
+            putString("queueIds", serializePlaybackQueue(current.queueIds))
+            putBoolean("shuffle", current.shuffle)
+            putBoolean("repeat", current.repeat)
+            apply()
+        }
+        lastProgressPersistedAtMs = SystemClock.elapsedRealtime()
+    }
+    fun persistCurrentPlaybackState() = persistPlaybackState()
     fun setVolume(value: Float) {
         val volume = value.coerceIn(0f, 1f)
         _state.value = _state.value.copy(volume = volume)
@@ -278,9 +476,17 @@ class PlaybackEngine private constructor(private val application: Application) {
                 if (_state.value.isPlaying) {
                     resumeAfterTransientFocusLoss = true
                     duckedForAudioFocus = false
-                    mediaPlayer?.pause()
+                    val current = mediaPlayer
+                    try {
+                        current?.pause()
+                        playbackPhase.onPlaybackPaused()
+                    } catch (exception: IllegalStateException) {
+                        current?.let { handleMediaPlayerError(it, "Error de audio: ${exception.localizedMessage}") }
+                        return
+                    }
                     applyPlayerVolume()
                     _state.value = _state.value.copy(isPlaying = false)
+                    persistPlaybackState(runCatching { current?.currentPosition }.getOrNull() ?: _progress.value.currentMs)
                     notifyOutputRoutingObservers()
                     publishSession(true)
                 }
@@ -295,24 +501,48 @@ class PlaybackEngine private constructor(private val application: Application) {
     private fun focusVolumeMultiplier(): Float = if (duckedForAudioFocus) 0.2f else 1f
 
     private fun applyPlayerVolume() {
+        if (!playbackPhase.canControlPlayer) return
+        val player = mediaPlayer ?: return
         val volume = _state.value.volume * focusVolumeMultiplier()
-        mediaPlayer?.setVolume(volume, volume)
+        try {
+            player.setVolume(volume, volume)
+        } catch (exception: IllegalStateException) {
+            handleMediaPlayerError(player, "Error de audio: ${exception.localizedMessage}")
+        }
     }
 
     private fun startMediaPlayerAfterFocusGain() {
         val player = mediaPlayer ?: return
-        if (player.isPlaying) return
+        if (!playbackPhase.canControlPlayer) return
         try {
+            if (player.isPlaying) return
             if (player.duration > 0 && player.currentPosition >= player.duration) player.seekTo(0)
             player.start()
+            playbackPhase.onPlaybackStarted()
             hasStartedPlayback = true
-            _state.value = _state.value.copy(isPlaying = true, error = null)
+            _state.value = _state.value.copy(isPlaying = true, isPreparing = false, error = null)
             notifyOutputRoutingObservers()
             publishSession(true)
             application.startForegroundService(Intent(application, PlaybackService::class.java))
         } catch (exception: Exception) {
-            _state.value = _state.value.copy(error = "Error de audio: ${exception.localizedMessage}")
+            handleMediaPlayerError(player, "Error de audio: ${exception.localizedMessage}")
         }
+    }
+
+    private fun handleMediaPlayerError(failed: MediaPlayer, message: String) {
+        if (mediaPlayer !== failed || !playbackPhase.onError()) return
+        logAudioRoute("player_error player=${playerToken(failed)}")
+        logAudioRouteSnapshot("player_error_snapshot", failed)
+        handler.removeCallbacks(ticker)
+        playWhenPrepared = false
+        resumeAfterTransientFocusLoss = false
+        duckedForAudioFocus = false
+        hasStartedPlayback = false
+        audioManager.abandonAudioFocusRequest(focusRequest)
+        PlaybackService.stopForegroundPlayback()
+        _state.value = _state.value.copy(isPlaying = false, isPreparing = false, error = message)
+        releasePlayer(preserveErrorPhase = true)
+        publishSession(true)
     }
     fun importSongs(uris: List<android.net.Uri>) {
         scope.launch { library.importSongs(uris) }
@@ -323,8 +553,9 @@ class PlaybackEngine private constructor(private val application: Application) {
         val next = queueSongs().firstOrNull() ?: library.songs.value.firstOrNull()
         if (next != null) select(next, autoplay = false) else {
             releasePlayer()
-            preferences.edit().remove("selectedSongID").apply()
             _state.value = PlayerState(repeat = _state.value.repeat, shuffle = _state.value.shuffle)
+            _progress.value = PlaybackProgress()
+            persistPlaybackState(0)
             publishSession(true)
             PlaybackService.stopForegroundPlayback()
         }
@@ -382,10 +613,11 @@ class PlaybackEngine private constructor(private val application: Application) {
     }
     fun stopForTaskRemoval() {
         if (mediaPlayer != null) pause()
+        persistPlaybackState()
         hasStartedPlayback = false
         releasePlayer()
         audioManager.abandonAudioFocusRequest(focusRequest)
-        _state.value = _state.value.copy(isPlaying = false)
+        _state.value = _state.value.copy(isPlaying = false, isPreparing = false)
         publishSession(true)
     }
     fun availableAudioOutputs(): List<AudioDeviceInfo> =
@@ -393,10 +625,13 @@ class PlaybackEngine private constructor(private val application: Application) {
 
     fun currentRoutedAudioOutput(): AudioDeviceInfo? {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.P) return null
+        if (!playbackPhase.canControlPlayer) return null
         return runCatching { mediaPlayer?.takeIf { it.isPlaying }?.routedDevice }.getOrNull()
     }
 
-    fun hasPreparedMediaPlayer(): Boolean = mediaPlayer != null
+    fun hasPreparedMediaPlayer(): Boolean = playbackPhase.canControlPlayer
+
+    fun isPreparingMediaPlayer(): Boolean = playbackPhase.isPreparing
 
     fun setPreferredAudioOutput(device: AudioDeviceInfo?): Boolean {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.P) {
@@ -405,6 +640,15 @@ class PlaybackEngine private constructor(private val application: Application) {
         }
         val current = mediaPlayer ?: run {
             logAudioRoute("setPreferredDevice target=${deviceToken(device)} result=no_player")
+            return false
+        }
+        if (playbackPhase.isPreparing) {
+            preferredOutputDeviceId = device?.id
+            logAudioRoute("setPreferredDevice target=${deviceToken(device)} result=deferred_until_prepared")
+            return true
+        }
+        if (!playbackPhase.canControlPlayer) {
+            logAudioRoute("setPreferredDevice target=${deviceToken(device)} result=player_not_prepared phase=${playbackPhase.phase}")
             return false
         }
         val accepted = runCatching { current.setPreferredDevice(device) }.getOrDefault(false)
@@ -426,6 +670,10 @@ class PlaybackEngine private constructor(private val application: Application) {
         }
         val current = mediaPlayer ?: run {
             logAudioRoute("clearPreferredDevice previousId=$previousPreferredId result=no_player_preference_cleared")
+            return true
+        }
+        if (!playbackPhase.canControlPlayer) {
+            logAudioRoute("clearPreferredDevice previousId=$previousPreferredId result=deferred_until_prepared")
             return true
         }
         val accepted = runCatching { current.setPreferredDevice(null) }.getOrDefault(false)
@@ -457,18 +705,14 @@ class PlaybackEngine private constructor(private val application: Application) {
         }
         val device = availableAudioOutputs().firstOrNull { it.id == preferredId }
         if (device == null) {
-            logAudioRoute("reapplyPreferredDevice targetId=$preferredId result=not_connected preference_cleared=true")
-            preferredOutputDeviceId = null
+            logAudioRoute("reapplyPreferredDevice targetId=$preferredId result=not_connected preference_preserved=true")
             return
         }
         val accepted = runCatching { player.setPreferredDevice(device) }.getOrDefault(false)
         logAudioRoute(
             "reapplyPreferredDevice target=${deviceToken(device)} accepted=$accepted " +
-                "preference_cleared=${!accepted}"
+                "preference_preserved=true"
         )
-        if (!accepted) {
-            preferredOutputDeviceId = null
-        }
     }
 
     private fun attachRoutingListenerIfNeeded() {
@@ -508,15 +752,18 @@ class PlaybackEngine private constructor(private val application: Application) {
         outputRoutingObservers.toList().forEach { it(routed) }
     }
 
-    private fun releasePlayer() {
+    private fun releasePlayer(preserveErrorPhase: Boolean = false) {
         handler.removeCallbacks(ticker)
-        playerReady = false
         playWhenPrepared = false
         logAudioRouteSnapshot("player_release_begin")
         mediaPlayer?.let { logAudioRoute("player_release player=${playerToken(it)}") }
         detachRoutingListener()
-        mediaPlayer?.release()
+        mediaPlayer?.let { player ->
+            runCatching { player.release() }
+                .onFailure { logAudioRoute("player_release_failed exception=${it.javaClass.simpleName}") }
+        }
         mediaPlayer = null
+        if (!preserveErrorPhase) playbackPhase.onReleased()
         logAudioRouteSnapshot("player_release_complete")
         notifyOutputRoutingObservers()
     }
@@ -559,6 +806,10 @@ class PlaybackEngine private constructor(private val application: Application) {
 
     private fun logAudioRouteSnapshot(event: String, player: MediaPlayer? = mediaPlayer) {
         if (!diagnosticLoggingEnabled) return
+        if (playbackPhase.isPreparing || playbackPhase.phase == PlaybackPhase.ERROR) {
+            logAudioRoute("$event player=${playerToken(player)} phase=${playbackPhase.phase}")
+            return
+        }
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.P) {
             logAudioRoute("$event api=${Build.VERSION.SDK_INT} player=${playerToken(player)}")
             return
@@ -646,8 +897,10 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     fun availableAudioOutputs() = engine.availableAudioOutputs()
     fun currentRoutedAudioOutput() = engine.currentRoutedAudioOutput()
     fun hasPreparedMediaPlayer() = engine.hasPreparedMediaPlayer()
+    fun isPreparingMediaPlayer() = engine.isPreparingMediaPlayer()
     fun setPreferredAudioOutput(device: AudioDeviceInfo) = engine.setPreferredAudioOutput(device)
     fun clearPreferredAudioOutput() = engine.clearPreferredAudioOutput()
     fun observeAudioOutputRouting(observer: (AudioDeviceInfo?) -> Unit) = engine.observeAudioOutputRouting(observer)
     fun stopForTaskRemoval() = engine.stopForTaskRemoval()
+    fun persistCurrentPlaybackState() = engine.persistCurrentPlaybackState()
 }

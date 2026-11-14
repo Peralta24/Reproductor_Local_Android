@@ -6,8 +6,9 @@
    See https://developer.android.com/about/versions/12/backup-restore
 -->
 <full-backup-content>
-    <!--
-   <include domain="sharedpref" path="."/>
-   <exclude domain="sharedpref" path="device.xml"/>
--->
+    <!-- Back up library metadata and artwork; never copy private user audio. -->
+    <include domain="file" path="songs.json" />
+    <include domain="file" path="playlists.json" />
+    <include domain="file" path="AlbumArtwork/" />
+    <include domain="file" path="PlaylistCovers/" />
 </full-backup-content>

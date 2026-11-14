@@ -93,7 +93,7 @@ fun SoniqAudioOutputDialog(
     }
 
     val directSelectionAvailable = Build.VERSION.SDK_INT >= Build.VERSION_CODES.P &&
-        player.hasPreparedMediaPlayer()
+        (player.hasPreparedMediaPlayer() || player.isPreparingMediaPlayer())
     val activeRoute = routedDevice.takeIf { isPlaying && Build.VERSION.SDK_INT >= Build.VERSION_CODES.P }
 
     Dialog(
@@ -226,6 +226,8 @@ fun SoniqAudioOutputDialog(
 
                             if (Build.VERSION.SDK_INT < Build.VERSION_CODES.P) {
                                 InfoPanel("Android 8.x no ofrece selección directa desde el reproductor. Usa el selector del sistema o Ajustes Bluetooth.")
+                            } else if (player.isPreparingMediaPlayer()) {
+                                InfoPanel("La canción se está preparando. La salida solicitada se aplicará cuando el reproductor esté listo.")
                             } else if (!player.hasPreparedMediaPlayer()) {
                                 InfoPanel("Para solicitar una salida directamente desde SONIQ, carga una canción. También puedes abrir el selector de Android.")
                             }
