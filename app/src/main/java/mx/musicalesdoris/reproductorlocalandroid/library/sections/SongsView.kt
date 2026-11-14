@@ -93,7 +93,7 @@ private fun SoniqStatsCard(songs: List<Song>, player: PlayerViewModel, theme: Pl
     val shape = RoundedCornerShape(18.dp)
     Column(modifier.fillMaxWidth().height(96.dp).background(SoniqPalette.librarySurface, shape)
         .border(2.dp, SoniqPalette.libraryBorder, shape).padding(horizontal = 15.dp, vertical = 10.dp)) {
-        Row(Modifier.fillMaxWidth().height(13.dp), horizontalArrangement = Arrangement.SpaceBetween,
+        Row(Modifier.fillMaxWidth().heightIn(min = 13.dp), horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
             Text("TU MÚSICA, CONTIGO", color = Color(0xFFA2B4C5), fontFamily = SoniqMonoFont,
                 fontSize = 10.sp, letterSpacing = 1.3.sp)

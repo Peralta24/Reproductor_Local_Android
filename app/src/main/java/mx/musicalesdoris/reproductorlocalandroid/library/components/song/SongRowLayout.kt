@@ -72,7 +72,8 @@ internal fun SongRowLayout(song: Song, selected: Boolean, artwork: File?, theme:
             Text(song.displayDuration(), color = if (soniq) SoniqPalette.metaText else theme.muted,
                 fontSize = if (soniq) 10.sp else 12.sp,
                 fontFamily = if (soniq) SoniqMonoFont else FontFamily.Monospace,
-                modifier = if (soniq) Modifier.width(24.dp) else Modifier)
+                maxLines = if (soniq) 1 else Int.MAX_VALUE, softWrap = !soniq,
+                modifier = if (soniq) Modifier.width(IntrinsicSize.Max) else Modifier)
             if (soniq) Spacer(Modifier.width(11.dp))
         }
         if (!soniq) Text(if (song.favorite) "♥" else "♡", color = theme.accent, fontSize = 20.sp,
