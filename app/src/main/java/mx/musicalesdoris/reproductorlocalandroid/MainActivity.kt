@@ -3,6 +3,8 @@ package mx.musicalesdoris.reproductorlocalandroid
 import android.content.Intent
 import android.graphics.BitmapFactory
 import android.os.Bundle
+import android.util.Log
+import android.content.pm.ApplicationInfo
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
@@ -31,6 +33,8 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.semantics.clearAndSetSemantics
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import mx.musicalesdoris.reproductorlocalandroid.library.LibraryScreen
@@ -103,6 +107,7 @@ class MainActivity : ComponentActivity() {
 private fun AppScreen(player: PlayerViewModel, themes: ThemeViewModel, theme: PlayerTheme,
                       requestedScreen: String, screenRequestId: Int,
                       importAudio: () -> Unit, chooseCover: (String) -> Unit) {
+    val debugLoggingEnabled = (LocalContext.current.applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE) != 0
     val songs by player.library.songs.collectAsState()
     val state by player.state.collectAsState()
     val libraryError by player.library.error.collectAsState()
@@ -118,48 +123,57 @@ private fun AppScreen(player: PlayerViewModel, themes: ThemeViewModel, theme: Pl
         }
     }
     val navigateBack: () -> Unit = {
-        screen = if (screenHistory.isNotEmpty()) screenHistory.removeAt(screenHistory.lastIndex) else "library"
+        val previousScreen = screen
+        val destination = if (screenHistory.isNotEmpty()) screenHistory.removeAt(screenHistory.lastIndex) else "library"
+        screen = destination
+        if (debugLoggingEnabled) Log.d("SONIQ_SWIPE_DEBUG", "navigation_updated from=$previousScreen to=$destination")
     }
     LaunchedEffect(requestedScreen, screenRequestId) {
         if (requestedScreen != screen) navigateTo(requestedScreen)
     }
     val error = state.error ?: libraryError
     val selectedSong = songs.firstOrNull { it.id == state.selectedId }
+    val contentScreen = if (screen == "player") screenHistory.lastOrNull { it != "player" } ?: "library" else screen
     BackHandler(enabled = screen != "library" && error == null) { navigateBack() }
     if (error != null) AlertDialog(onDismissRequest = player::clearError,
         title = { Text("Error") }, text = { Text(error) },
         confirmButton = { TextButton(onClick = player::clearError) { Text("Aceptar") } })
     Box(Modifier.fillMaxSize().background(theme.background).statusBarsPadding().navigationBarsPadding()) {
-        if (screen == "library") {
-            LibraryScreen(theme, songs, state, player, importAudio,
-                section = librarySection.value, onSectionChange = { librarySection.value = it },
-                detailStack = libraryDetails,
-                systemBackEnabled = error == null,
-                onPlayer = { navigateTo("player") }, onThemes = { navigateTo("themes") },
-                onProfile = { navigateTo("profile") }, onEqualizer = { navigateTo("equalizer") }, chooseCover = chooseCover)
-        } else if (screen == "player") {
-            ThemedPlayerScreen(theme, selectedSong, state, player,
-                onClose = navigateBack, importAudio = importAudio)
-        } else {
-            Column(Modifier.fillMaxSize()) {
-                Column(Modifier.weight(1f)) {
-                    when (screen) {
-                        "themes" -> Column {
-                            ScreenHeader("Temas", theme, navigateBack)
-                            ThemesScreen(theme, selectedId, themes)
-                        }
-                        "profile" -> Column {
-                            ScreenHeader("Perfil", theme, navigateBack)
-                            ProfileScreen(songs, player.library.playlists.value.size) { navigateTo("themes") }
-                        }
-                        "equalizer" -> Column(Modifier.fillMaxSize()) {
-                            ScreenHeader("Ecualizador", theme, navigateBack)
-                            EqualizerScreen()
+        Box(Modifier.fillMaxSize().then(
+            if (screen == "player") Modifier.clearAndSetSemantics {} else Modifier
+        )) {
+            if (contentScreen == "library") {
+                LibraryScreen(theme, songs, state, player, importAudio,
+                    section = librarySection.value, onSectionChange = { librarySection.value = it },
+                    detailStack = libraryDetails,
+                    systemBackEnabled = screen == "library" && error == null,
+                    onPlayer = { navigateTo("player") }, onThemes = { navigateTo("themes") },
+                    onProfile = { navigateTo("profile") }, onEqualizer = { navigateTo("equalizer") }, chooseCover = chooseCover)
+            } else {
+                Column(Modifier.fillMaxSize()) {
+                    Column(Modifier.weight(1f)) {
+                        when (contentScreen) {
+                            "themes" -> Column {
+                                ScreenHeader("Temas", theme, navigateBack)
+                                ThemesScreen(theme, selectedId, themes)
+                            }
+                            "profile" -> Column {
+                                ScreenHeader("Perfil", theme, navigateBack)
+                                ProfileScreen(songs, player.library.playlists.value.size) { navigateTo("themes") }
+                            }
+                            "equalizer" -> Column(Modifier.fillMaxSize()) {
+                                ScreenHeader("Ecualizador", theme, navigateBack)
+                                EqualizerScreen()
+                            }
                         }
                     }
+                    MiniPlayer(selectedSong, state, theme, player) { navigateTo("player") }
                 }
-                MiniPlayer(selectedSong, state, theme, player) { navigateTo("player") }
             }
+        }
+        if (screen == "player") {
+            ThemedPlayerScreen(theme, selectedSong, state, player,
+                onClose = navigateBack, importAudio = importAudio)
         }
     }
 }

@@ -2,10 +2,15 @@ package mx.musicalesdoris.reproductorlocalandroid.player
 
 import android.media.AudioDeviceInfo
 import android.os.Build
+import android.util.Log
+import android.content.pm.ApplicationInfo
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitVerticalTouchSlopOrCancellation
+import androidx.compose.foundation.gestures.verticalDrag
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -16,6 +21,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.tween
 import androidx.compose.material3.*
@@ -26,9 +32,14 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.input.pointer.positionChange
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.rememberTextMeasurer
 import mx.musicalesdoris.reproductorlocalandroid.library.components.artwork.SoniqCdCase
@@ -49,6 +60,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import android.animation.ValueAnimator
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import mx.musicalesdoris.reproductorlocalandroid.PlayerState
 import mx.musicalesdoris.reproductorlocalandroid.PlayerTheme
 import mx.musicalesdoris.reproductorlocalandroid.PlayerViewModel
@@ -61,7 +73,18 @@ import mx.musicalesdoris.reproductorlocalandroid.ui.theme.soniqClickable
 fun SoniqPlayerScreen(theme: PlayerTheme, song: Song?, state: PlayerState,
                       player: PlayerViewModel, onClose: () -> Unit) {
     val progress by player.progress.collectAsState()
+    val debugLoggingEnabled = (LocalContext.current.applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE) != 0
     val marqueeEnabled = ValueAnimator.areAnimatorsEnabled()
+    val swipeCloseThresholdPx = with(LocalDensity.current) { 120.dp.toPx() }
+    val swipeCloseSafeInsetPx = with(LocalDensity.current) { 56.dp.toPx() }
+    val coroutineScope = rememberCoroutineScope()
+    val playerExitOffset = remember { Animatable(0f) }
+    var isFollowingFinger by remember { mutableStateOf(false) }
+    var fingerOffsetPx by remember { mutableFloatStateOf(0f) }
+    var playerHeightPx by remember { mutableStateOf(0f) }
+    var isClosingBySwipe by remember { mutableStateOf(false) }
+    var isSwipeTransitionRunning by remember { mutableStateOf(false) }
+    val currentOnClose by rememberUpdatedState(onClose)
     var menuExpanded by remember { mutableStateOf(false) }
     var showQueue by remember { mutableStateOf(false) }
     var showAudioOutput by remember { mutableStateOf(false) }
@@ -81,10 +104,82 @@ fun SoniqPlayerScreen(theme: PlayerTheme, song: Song?, state: PlayerState,
         onDispose { routeSubscription.close() }
     }
     val queue = player.queueSongs()
-    Column(Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(theme.topGlow, theme.background,
-        theme.bottomGlow))).verticalScroll(rememberScrollState()).padding(horizontal = 20.dp, vertical = 13.dp),
+    val playerScrollState = rememberScrollState()
+    val isPlayerAtTop by remember(playerScrollState) {
+        derivedStateOf { playerScrollState.value == 0 }
+    }
+    val swipeCloseEnabled = !isClosingBySwipe && !isSwipeTransitionRunning &&
+        !menuExpanded && !showQueue && !showAudioOutput
+    val onSwipeGestureFinished: (Float, Boolean) -> Unit = { dragOffsetPx, dragCompleted ->
+        if (!isSwipeTransitionRunning) {
+            val shouldClose = dragCompleted && dragOffsetPx >= swipeCloseThresholdPx
+            if (debugLoggingEnabled) Log.d(
+                "SONIQ_SWIPE_DEBUG",
+                "gesture_finished completed=$dragCompleted offsetPx=${dragOffsetPx.toInt()} thresholdPx=${swipeCloseThresholdPx.toInt()} close=$shouldClose"
+            )
+            isSwipeTransitionRunning = true
+            isClosingBySwipe = shouldClose
+            coroutineScope.launch {
+                playerExitOffset.snapTo(dragOffsetPx)
+                isFollowingFinger = false
+                val targetOffsetPx = if (shouldClose) playerHeightPx else 0f
+                val startingOffsetPx = dragOffsetPx
+                if (marqueeEnabled && playerHeightPx > 0f) {
+                    val remainingDistancePx = kotlin.math.abs(targetOffsetPx - startingOffsetPx)
+                    val durationMs = if (shouldClose) {
+                        (360f * remainingDistancePx / playerHeightPx).toInt().coerceIn(1, 360)
+                    } else {
+                        220
+                    }
+                    if (debugLoggingEnabled) Log.d(
+                        "SONIQ_SWIPE_DEBUG",
+                        "${if (shouldClose) "exit" else "return"}_animation_start fromPx=${startingOffsetPx.toInt()} toPx=${targetOffsetPx.toInt()} durationMs=$durationMs"
+                    )
+                    playerExitOffset.animateTo(
+                        targetValue = targetOffsetPx,
+                        animationSpec = tween(durationMs, easing = FastOutSlowInEasing)
+                    )
+                    if (debugLoggingEnabled) Log.d(
+                        "SONIQ_SWIPE_DEBUG",
+                        "${if (shouldClose) "exit" else "return"}_animation_end"
+                    )
+                } else {
+                    playerExitOffset.snapTo(targetOffsetPx)
+                    if (debugLoggingEnabled) Log.d(
+                        "SONIQ_SWIPE_DEBUG",
+                        "${if (shouldClose) "exit" else "return"}_animation_skipped enabled=$marqueeEnabled heightPx=${playerHeightPx.toInt()}"
+                    )
+                }
+                if (shouldClose) {
+                    if (debugLoggingEnabled) Log.d("SONIQ_SWIPE_DEBUG", "onClose_invoked")
+                    currentOnClose()
+                } else {
+                    isSwipeTransitionRunning = false
+                }
+            }
+        }
+    }
+    Column(Modifier.fillMaxSize()
+        .onSizeChanged { playerHeightPx = it.height.toFloat() }
+        .graphicsLayer { translationY = if (isFollowingFinger) fingerOffsetPx else playerExitOffset.value }
+        .background(Brush.verticalGradient(listOf(theme.topGlow, theme.background,
+            theme.bottomGlow))).verticalScroll(playerScrollState).padding(horizontal = 20.dp, vertical = 13.dp),
         horizontalAlignment = Alignment.CenterHorizontally) {
-        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+        Row(
+            Modifier.fillMaxWidth().soniqCloseSwipeGesture(
+                zone = "header",
+                enabled = swipeCloseEnabled,
+                safeStartInsetPx = swipeCloseSafeInsetPx,
+                maxOffsetPx = playerHeightPx,
+                passUpwardToScroll = true,
+                onDragOffsetChanged = { offsetPx ->
+                    fingerOffsetPx = offsetPx
+                    isFollowingFinger = true
+                },
+                onGestureFinished = onSwipeGestureFinished
+            ),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
             ChromeButton("⌄", onClose)
             Spacer(Modifier.weight(1f))
             Column(horizontalAlignment = Alignment.CenterHorizontally) {
@@ -136,7 +231,23 @@ fun SoniqPlayerScreen(theme: PlayerTheme, song: Song?, state: PlayerState,
         Spacer(Modifier.height(19.dp))
         BoxWithConstraints(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
             val side = (maxWidth - 22.dp).coerceAtMost(440.dp)
-            SoniqPlayerArtwork(song, player, side)
+            SoniqPlayerArtwork(
+                song,
+                player,
+                side,
+                modifier = Modifier.soniqCloseSwipeGesture(
+                    zone = "artwork",
+                    enabled = swipeCloseEnabled && isPlayerAtTop,
+                    safeStartInsetPx = 0f,
+                    maxOffsetPx = playerHeightPx,
+                    passUpwardToScroll = true,
+                    onDragOffsetChanged = { offsetPx ->
+                        fingerOffsetPx = offsetPx
+                        isFollowingFinger = true
+                    },
+                    onGestureFinished = onSwipeGestureFinished
+                )
+            )
         }
         Spacer(Modifier.height(23.dp))
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
@@ -346,10 +457,49 @@ private fun TransportButton(name: String, size: Dp, theme: PlayerTheme, action: 
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
+private fun Modifier.soniqCloseSwipeGesture(
+    zone: String,
+    enabled: Boolean,
+    safeStartInsetPx: Float,
+    maxOffsetPx: Float,
+    passUpwardToScroll: Boolean,
+    onDragOffsetChanged: (Float) -> Unit,
+    onGestureFinished: (Float, Boolean) -> Unit
+): Modifier = pointerInput(zone, enabled, safeStartInsetPx, maxOffsetPx, passUpwardToScroll) {
+    if (!enabled) return@pointerInput
+
+    awaitEachGesture {
+        val down = awaitFirstDown(requireUnconsumed = false)
+        val safeStart = down.position.x >= safeStartInsetPx &&
+            down.position.x <= size.width - safeStartInsetPx
+        if (!safeStart) return@awaitEachGesture
+
+        var dragOffsetPx = 0f
+        val verticalStart = awaitVerticalTouchSlopOrCancellation(down.id) { change, overSlop ->
+            if (overSlop > 0f || !passUpwardToScroll) {
+                // Capture the full pre-movement displacement before the translated surface starts moving.
+                dragOffsetPx = (change.position.y - down.position.y).coerceIn(0f, maxOffsetPx)
+                change.consume()
+            }
+        }
+        if (verticalStart == null) return@awaitEachGesture
+
+        onDragOffsetChanged(dragOffsetPx)
+        val dragCompleted = verticalDrag(verticalStart.id) { change ->
+            // Accumulate physical screen deltas; absolute local positions would use a moving coordinate frame.
+            dragOffsetPx = (dragOffsetPx + change.positionChange().y).coerceIn(0f, maxOffsetPx)
+            change.consume()
+            onDragOffsetChanged(dragOffsetPx)
+        }
+        onGestureFinished(dragOffsetPx, dragCompleted)
+    }
+}
+
 @Composable
-private fun SoniqPlayerArtwork(song: Song?, player: PlayerViewModel, side: Dp) {
+private fun SoniqPlayerArtwork(song: Song?, player: PlayerViewModel, side: Dp, modifier: Modifier = Modifier) {
     val file = song?.let(player.library::artworkFor)
-    Box(Modifier.size(side),
+    Box(Modifier.size(side).then(modifier),
         contentAlignment = Alignment.Center) {
         SoniqCdCase(file, PlayerTheme.all.first { it.id == "soniq" }, side, song?.id.orEmpty())
         Text(song?.fileName?.substringAfterLast('.', "AUDIO")?.uppercase() ?: "AUDIO", color = Color.White,
