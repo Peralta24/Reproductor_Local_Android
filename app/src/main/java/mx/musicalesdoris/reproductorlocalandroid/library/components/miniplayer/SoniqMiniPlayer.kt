@@ -82,6 +82,7 @@ fun SoniqMiniPlayer(song: Song?, state: PlayerState, progress: PlaybackProgress,
                 }
                 Text(song?.let { songFormatLabel(it.fileName) } ?: "AUDIO", color = SoniqPalette.cyan, fontFamily = SoniqMonoFont,
                     fontWeight = FontWeight.Bold, fontSize = 7.sp, letterSpacing = .5.sp,
+                    maxLines = 1, softWrap = false, overflow = TextOverflow.Ellipsis,
                     modifier = Modifier.background(SoniqPalette.lcdTop, RoundedCornerShape(3.dp))
                         .padding(horizontal = 4.dp, vertical = 1.dp))
             }
@@ -96,6 +97,7 @@ fun SoniqMiniPlayer(song: Song?, state: PlayerState, progress: PlaybackProgress,
                 verticalArrangement = Arrangement.spacedBy(5.dp, Alignment.CenterVertically)) {
                 Text("DIGITAL MP3 PLAYER", color = SoniqPalette.lcdText, fontFamily = SoniqMonoFont,
                     fontSize = 6.sp, letterSpacing = .8.sp, textAlign = TextAlign.Center,
+                    maxLines = 1, softWrap = false, overflow = TextOverflow.Ellipsis,
                     modifier = Modifier.fillMaxWidth())
                 Box(Modifier.fillMaxWidth().height(1.dp).background(SoniqPalette.lcdBorder))
                 Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically,
@@ -111,7 +113,7 @@ fun SoniqMiniPlayer(song: Song?, state: PlayerState, progress: PlaybackProgress,
                 Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                     Text(time(progress.currentMs), color = SoniqPalette.lcdText, fontFamily = SoniqMonoFont,
-                        fontSize = 6.sp, maxLines = 1)
+                        fontSize = 6.sp, maxLines = 1, softWrap = false, overflow = TextOverflow.Ellipsis)
                     Box(Modifier.weight(1f).height(4.dp)
                         .background(SoniqPalette.lcdTrack, RoundedCornerShape(1.dp))) {
                         Box(Modifier.fillMaxWidth(if (progress.durationMs > 0)
@@ -119,7 +121,7 @@ fun SoniqMiniPlayer(song: Song?, state: PlayerState, progress: PlaybackProgress,
                             .height(4.dp).background(SoniqPalette.cyan, RoundedCornerShape(1.dp)))
                     }
                     Text(time(progress.durationMs), color = SoniqPalette.lcdText, fontFamily = SoniqMonoFont,
-                        fontSize = 6.sp, maxLines = 1)
+                        fontSize = 6.sp, maxLines = 1, softWrap = false, overflow = TextOverflow.Ellipsis)
                 }
             }
 
