@@ -21,6 +21,9 @@ import androidx.compose.ui.unit.sp
 import mx.musicalesdoris.reproductorlocalandroid.PlayerTheme
 import mx.musicalesdoris.reproductorlocalandroid.SongLibrary
 import mx.musicalesdoris.reproductorlocalandroid.Playlist
+import mx.musicalesdoris.reproductorlocalandroid.Song
+import mx.musicalesdoris.reproductorlocalandroid.albumKey
+import mx.musicalesdoris.reproductorlocalandroid.key
 import mx.musicalesdoris.reproductorlocalandroid.library.AlbumSummary
 import mx.musicalesdoris.reproductorlocalandroid.library.ArtistSummary
 import mx.musicalesdoris.reproductorlocalandroid.library.components.album.AlbumCard
@@ -63,7 +66,10 @@ fun PlaylistsView(library: SongLibrary, playlists: List<Playlist>, theme: Player
 @Composable
 fun AlbumsView(library: SongLibrary, theme: PlayerTheme, onOpen: (AlbumSummary) -> Unit) {
     var newestFirst by remember { mutableStateOf(true) }
-    val albums = library.albums().sortedBy { it.latestImportedAt }.let { if (newestFirst) it.reversed() else it }
+    val catalog by library.songs.collectAsState()
+    val sortedAlbums = remember(catalog) { library.albums().sortedByDescending { it.latestImportedAt } }
+    val albums = remember(sortedAlbums, newestFirst) { if (newestFirst) sortedAlbums else sortedAlbums.asReversed() }
+    val artworkSongs = remember(catalog) { catalog.artworkRepresentatives { it.albumKey() } }
     Column {
         Text("Tus álbumes", color = theme.foreground, fontFamily = if (theme.id == "soniq") SoniqHeadingFont else androidx.compose.ui.text.font.FontFamily.Default,
             fontSize = if (theme.id == "soniq") 25.sp else 28.sp,
@@ -73,7 +79,7 @@ fun AlbumsView(library: SongLibrary, theme: PlayerTheme, onOpen: (AlbumSummary) 
         else LazyVerticalGrid(columns = GridCells.Fixed(2), horizontalArrangement = Arrangement.spacedBy(14.dp),
             verticalArrangement = Arrangement.spacedBy(21.dp)) {
             items(albums, key = { it.id }) { album ->
-                val art = library.songsInAlbum(album.id).firstOrNull()?.let(library::artworkFor)
+                val art = artworkSongs[album.id]?.let(library::artworkFor)
                 AlbumCard(album, art, theme) { onOpen(album) }
             }
         }
@@ -83,7 +89,10 @@ fun AlbumsView(library: SongLibrary, theme: PlayerTheme, onOpen: (AlbumSummary) 
 @Composable
 fun ArtistsView(library: SongLibrary, theme: PlayerTheme, onOpen: (ArtistSummary) -> Unit) {
     var newestFirst by remember { mutableStateOf(true) }
-    val artists = library.artists().sortedBy { it.latestImportedAt }.let { if (newestFirst) it.reversed() else it }
+    val catalog by library.songs.collectAsState()
+    val sortedArtists = remember(catalog) { library.artists().sortedByDescending { it.latestImportedAt } }
+    val artists = remember(sortedArtists, newestFirst) { if (newestFirst) sortedArtists else sortedArtists.asReversed() }
+    val artworkSongs = remember(catalog) { catalog.artworkRepresentatives { it.artist.key() } }
     Column {
         Text("Tus artistas", color = theme.foreground, fontFamily = if (theme.id == "soniq") SoniqHeadingFont else androidx.compose.ui.text.font.FontFamily.Default,
             fontSize = if (theme.id == "soniq") 25.sp else 28.sp,
@@ -92,11 +101,21 @@ fun ArtistsView(library: SongLibrary, theme: PlayerTheme, onOpen: (ArtistSummary
         if (artists.isEmpty()) EmptyCollection("Aún no hay artistas", theme)
         else LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
             items(artists, key = { it.id }) { artist ->
-                val art = library.songsByArtist(artist.id).firstOrNull()?.let(library::artworkFor)
+                val art = artworkSongs[artist.id]?.let(library::artworkFor)
                 ArtistRow(artist, art, theme) { onOpen(artist) }
             }
         }
     }
+}
+
+private inline fun List<Song>.artworkRepresentatives(keyFor: (Song) -> String?): Map<String, Song> {
+    val result = HashMap<String, Song>()
+    for (song in this) {
+        val key = keyFor(song) ?: continue
+        if (key !in result || (result[key]?.artworkFileName == null && song.artworkFileName != null))
+            result[key] = song
+    }
+    return result
 }
 
 @Composable

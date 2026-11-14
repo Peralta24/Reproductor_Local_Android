@@ -61,7 +61,7 @@ fun SongCollection(songs: List<Song>, state: PlayerState, player: PlayerViewMode
                         onDelete = {
                             if (playlistId != null) player.library.setPlaylistSongs(playlistId, ids - song.id)
                             else pendingDelete = song
-                        }, destructiveTitle = if (playlistId != null) "Quitar de la lista" else "Eliminar archivo",
+                        }, destructiveTitle = if (playlistId != null) "Quitar de la lista" else if (song.contentUri != null) "Quitar de la biblioteca" else "Eliminar archivo",
                         onMoveUp = if (playlistId != null && playlistIndex > 0) ({
                             player.library.setPlaylistSongs(playlistId, ids.toMutableList().apply { add(playlistIndex - 1, removeAt(playlistIndex)) })
                         }) else null,
@@ -84,7 +84,8 @@ fun SongCollection(songs: List<Song>, state: PlayerState, player: PlayerViewMode
     pendingDelete?.let { song ->
         AlertDialog(onDismissRequest = { pendingDelete = null },
             title = { Text("Eliminar canción", color = if (theme.id == "soniq") SoniqPalette.ink else theme.foreground) },
-            text = { Text("¿Eliminar ${song.title} del dispositivo?", color = if (theme.id == "soniq") SoniqPalette.secondaryText else theme.muted) },
+            text = { Text(if (song.contentUri != null) "¿Quitar ${song.title} de la biblioteca? El archivo permanecerá en el dispositivo."
+                else "¿Eliminar ${song.title} del dispositivo?", color = if (theme.id == "soniq") SoniqPalette.secondaryText else theme.muted) },
             confirmButton = { TextButton(onClick = { player.delete(song); pendingDelete = null }) { Text("Eliminar") } },
             dismissButton = { TextButton(onClick = { pendingDelete = null }) { Text("Cancelar") } },
             containerColor = if (theme.id == "soniq") Color(0xFFEAF2FB) else theme.background,

@@ -33,8 +33,10 @@ import java.util.Locale
 @Composable
 fun SongsView(songs: List<Song>, state: PlayerState, player: PlayerViewModel, theme: PlayerTheme) {
     var query by remember { mutableStateOf("") }
-    val visible = songs.filter { it.title.contains(query, true) || it.artist?.contains(query, true) == true ||
-        it.album?.contains(query, true) == true }
+    val visible = remember(songs, query) {
+        if (query.isBlank()) songs else songs.filter { it.title.contains(query, true) ||
+            it.artist?.contains(query, true) == true || it.album?.contains(query, true) == true }
+    }
     Column(Modifier.fillMaxSize()) {
         if (theme.id == "soniq") {
             SoniqStatsCard(songs, player, theme, Modifier.padding(top = 10.dp))
@@ -84,10 +86,13 @@ private fun SoniqSearchField(query: String, onQueryChange: (String) -> Unit) {
 @Composable
 private fun SoniqStatsCard(songs: List<Song>, player: PlayerViewModel, theme: PlayerTheme, modifier: Modifier = Modifier) {
     val context = LocalContext.current
-    val bytes = remember(songs) { songs.sumOf { player.library.fileFor(it).length() } }
-    val size = Formatter.formatShortFileSize(context, bytes)
-    val known = songs.all { it.durationMs != null }
-    val totalMinutes = songs.sumOf { it.durationMs ?: 0L } / 60000
+    val stats = remember(songs) {
+        Triple(songs.sumOf { player.library.sizeFor(it) },
+            songs.all { it.durationMs != null }, songs.sumOf { it.durationMs ?: 0L } / 60000)
+    }
+    val size = remember(stats.first, context) { Formatter.formatShortFileSize(context, stats.first) }
+    val known = stats.second
+    val totalMinutes = stats.third
     val duration = if (!known) "—" else if (totalMinutes >= 60) "${totalMinutes / 60} h ${totalMinutes % 60} min"
         else "$totalMinutes min"
     val shape = RoundedCornerShape(18.dp)

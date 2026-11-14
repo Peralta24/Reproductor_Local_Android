@@ -5,10 +5,15 @@ import android.graphics.BitmapFactory
 import android.graphics.Bitmap
 import android.media.MediaMetadataRetriever
 import android.net.Uri
+import android.os.Build
+import android.content.ContentUris
+import android.provider.MediaStore
 import android.provider.OpenableColumns
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import org.json.JSONArray
@@ -27,7 +32,8 @@ data class Song(
     val favoritedAt: Long? = null, val importedAt: Long = System.currentTimeMillis(),
     val durationMs: Long? = null, val album: String? = null, val artist: String? = null,
     val genre: String? = null, val track: Int? = null, val artworkFileName: String? = null,
-    val sourceFolder: String? = null, val metadataScanned: Boolean = false
+    val sourceFolder: String? = null, val metadataScanned: Boolean = false,
+    val contentUri: String? = null, val sizeBytes: Long = 0L
 ) {
     val subtitle: String get() = listOfNotNull(artist, album).filter { it.isNotBlank() }
         .joinToString(" · ").ifBlank { "Archivo local" }
@@ -41,6 +47,7 @@ data class Playlist(
 )
 
 class SongLibrary(private val context: Context) {
+    private val hiddenMediaIds = context.getSharedPreferences("library", Context.MODE_PRIVATE)
     private val directory = File(context.filesDir, "Songs").apply { mkdirs() }
     private val artworkDirectory = File(context.filesDir, "AlbumArtwork").apply { mkdirs() }
     private val playlistCoverDirectory = File(context.filesDir, "PlaylistCovers").apply { mkdirs() }
@@ -48,35 +55,47 @@ class SongLibrary(private val context: Context) {
     private val playlistCatalog = File(context.filesDir, "playlists.json")
     private var catalogReadFailed = false
     private var playlistReadFailed = false
+    private val metadataScanMutex = Mutex()
     val error = MutableStateFlow<String?>(null)
     private val _songs = MutableStateFlow(readSongs())
     val songs = _songs.asStateFlow()
+    private data class ArtworkIndex(val songs: List<Song>, val byAlbum: Map<String, String>)
+    @Volatile private var artworkIndex: ArtworkIndex? = null
     private val _playlists = MutableStateFlow(readPlaylists())
     val playlists = _playlists.asStateFlow()
     init {
         CoroutineScope(Dispatchers.IO).launch {
-            val original = _songs.value
-            if (original.none { !it.metadataScanned }) return@launch
-            val updated = original.map { song ->
-                if (song.metadataScanned) song else enrich(song)
+            enrichMissingMetadata()
+        }
+    }
+    private suspend fun enrichMissingMetadata() {
+        metadataScanMutex.lock()
+        try {
+            val original = _songs.value.filter { !it.metadataScanned }
+            if (original.isEmpty()) return
+            val updated = HashMap<String, Song>(original.size)
+            for (song in original) {
+                updated[song.id] = enrich(song)
+                delay(15)
             }
-            try {
-                synchronized(this@SongLibrary) {
-                    val byId = updated.associateBy { it.id }
-                    val merged = _songs.value.map { current ->
-                        byId[current.id]?.takeIf { !current.metadataScanned } ?: current
-                    }
-                    saveSongs(merged)
-                    _songs.value = merged
+            synchronized(this) {
+                val merged = _songs.value.map { current ->
+                    updated[current.id]?.takeIf { !current.metadataScanned } ?: current
                 }
+                saveSongs(merged)
+                _songs.value = merged
             }
-            catch (exception: Exception) { error.value = "No se pudieron actualizar los metadatos: ${exception.localizedMessage}" }
+        } catch (exception: Exception) {
+            error.value = "No se pudieron actualizar los metadatos: ${exception.localizedMessage}"
+        } finally {
+            metadataScanMutex.unlock()
         }
     }
     private fun enrich(song: Song): Song {
         val retriever = MediaMetadataRetriever()
         return try {
-            retriever.setDataSource(fileFor(song).absolutePath)
+            if (song.contentUri != null) retriever.setDataSource(context, Uri.parse(song.contentUri))
+            else retriever.setDataSource(fileFor(song).absolutePath)
             fun field(key: Int) = retriever.extractMetadata(key)?.trim()?.takeIf(String::isNotEmpty)
             val artName = retriever.embeddedPicture?.let { bytes ->
                 val name = "${song.id}.jpg"
@@ -94,6 +113,67 @@ class SongLibrary(private val context: Context) {
     }
 
     fun fileFor(song: Song) = File(directory, song.fileName)
+    fun uriFor(song: Song): Uri = song.contentUri?.let(Uri::parse) ?: Uri.fromFile(fileFor(song))
+    fun sizeFor(song: Song): Long = if (song.contentUri != null) song.sizeBytes else fileFor(song).length()
+
+    /** Reconciles the system's audio index without copying the device's music. */
+    @Synchronized fun scanDeviceMusic() {
+        try {
+            val collection = MediaStore.Audio.Media.EXTERNAL_CONTENT_URI
+            val folderColumn = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q)
+                MediaStore.Audio.Media.RELATIVE_PATH else MediaStore.Audio.Media.DATA
+            val projection = arrayOf(MediaStore.Audio.Media._ID, MediaStore.Audio.Media.DISPLAY_NAME,
+                MediaStore.Audio.Media.TITLE, MediaStore.Audio.Media.ALBUM,
+                MediaStore.Audio.Media.ARTIST, MediaStore.Audio.Media.DURATION,
+                MediaStore.Audio.Media.SIZE, MediaStore.Audio.Media.DATE_ADDED,
+                folderColumn, MediaStore.Audio.Media.TRACK)
+            val found = mutableListOf<Song>()
+            val oldByUri = _songs.value.mapNotNull { song -> song.contentUri?.let { it to song } }.toMap()
+            val hidden = hiddenMediaIds.getStringSet("hidden", emptySet()).orEmpty()
+            context.contentResolver.query(collection, projection,
+                "${MediaStore.Audio.Media.IS_MUSIC} != 0", null,
+                "${MediaStore.Audio.Media.TITLE} COLLATE NOCASE ASC")?.use { cursor ->
+                fun string(column: String) = cursor.getString(cursor.getColumnIndexOrThrow(column))
+                fun number(column: String) = cursor.getLong(cursor.getColumnIndexOrThrow(column))
+                while (cursor.moveToNext()) {
+                    val mediaId = number(MediaStore.Audio.Media._ID)
+                    val uri = ContentUris.withAppendedId(collection, mediaId).toString()
+                    val name = string(MediaStore.Audio.Media.DISPLAY_NAME) ?: continue
+                    if ("media:$mediaId" in hidden) continue
+                    val old = oldByUri[uri]
+                    val title = string(MediaStore.Audio.Media.TITLE)?.takeIf { it.isNotBlank() }
+                        ?: name.substringBeforeLast('.', name)
+                    found += Song(id = old?.id ?: "media:$mediaId", fileName = name,
+                        title = title, favorite = old?.favorite ?: false,
+                        favoritedAt = old?.favoritedAt,
+                        importedAt = old?.importedAt ?: number(MediaStore.Audio.Media.DATE_ADDED) * 1000,
+                        durationMs = number(MediaStore.Audio.Media.DURATION).takeIf { it > 0 },
+                        album = string(MediaStore.Audio.Media.ALBUM)?.takeIf { it.isNotBlank() && it != "<unknown>" } ?: old?.album,
+                        artist = string(MediaStore.Audio.Media.ARTIST)?.takeIf { it.isNotBlank() && it != "<unknown>" } ?: old?.artist,
+                        genre = old?.genre,
+                        track = number(MediaStore.Audio.Media.TRACK).toInt().takeIf { it > 0 },
+                        artworkFileName = old?.artworkFileName,
+                        sourceFolder = string(folderColumn)?.let { path ->
+                            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) path.trimEnd('/')
+                            else path.substringBeforeLast('/', "")
+                        }?.takeIf { it.isNotBlank() },
+                        metadataScanned = old?.metadataScanned ?: false,
+                        contentUri = uri, sizeBytes = number(MediaStore.Audio.Media.SIZE))
+                }
+            } ?: return
+            val local = _songs.value.filter { it.contentUri == null }
+            val updated = local + found
+            if (updated != _songs.value) {
+                saveSongs(updated)
+                _songs.value = updated
+                if (updated.any { !it.metadataScanned }) {
+                    CoroutineScope(Dispatchers.IO).launch { enrichMissingMetadata() }
+                }
+            }
+        } catch (exception: Exception) {
+            error.value = "No se pudo leer la música del dispositivo: ${exception.localizedMessage}"
+        }
+    }
     fun albums(): List<AlbumSummary> = _songs.value.filter { it.albumKey() != null }
         .groupBy { it.albumKey()!! }.map { (key, members) ->
             AlbumSummary(key, members.first().album ?: "", members.first().artist ?: "Artista desconocido",
@@ -119,9 +199,14 @@ class SongLibrary(private val context: Context) {
             if (members.all { it.durationMs != null }) members.sumOf { it.durationMs ?: 0L } else null)
     }
     fun artworkFor(song: Song): File? {
-        val name = song.artworkFileName ?: _songs.value.firstOrNull {
-            it.albumKey() != null && it.albumKey() == song.albumKey() && it.artworkFileName != null
-        }?.artworkFileName
+        val catalog = _songs.value
+        val index = artworkIndex?.takeIf { it.songs === catalog } ?: ArtworkIndex(catalog,
+            catalog.mapNotNull { candidate ->
+                val key = candidate.albumKey()
+                val name = candidate.artworkFileName
+                if (key != null && name != null) key to name else null
+            }.toMap()).also { artworkIndex = it }
+        val name = song.artworkFileName ?: song.albumKey()?.let(index.byAlbum::get)
         return name?.let { File(artworkDirectory, it) }?.takeIf(File::exists)
     }
     fun coverFor(playlist: Playlist): File? = playlist.coverFileName?.let { File(playlistCoverDirectory, it) }?.takeIf(File::exists)
@@ -206,10 +291,14 @@ class SongLibrary(private val context: Context) {
         return try {
             saveSongs(updated)
             savePlaylists(updatedPlaylists)
-            if (!fileFor(song).delete()) error("No se pudo eliminar el archivo")
+            if (song.contentUri == null && !fileFor(song).delete()) error("No se pudo eliminar el archivo")
             song.artworkFileName?.let { File(artworkDirectory, it).delete() }
             _songs.value = updated
             _playlists.value = updatedPlaylists
+            if (song.contentUri != null) {
+                val hidden = hiddenMediaIds.getStringSet("hidden", emptySet()).orEmpty() + song.id
+                hiddenMediaIds.edit().putStringSet("hidden", hidden).apply()
+            }
             true
         } catch (exception: Exception) {
             try { saveSongs(previous); savePlaylists(previousPlaylists) } catch (_: Exception) {}
@@ -305,8 +394,9 @@ class SongLibrary(private val context: Context) {
                         item.optLong("importedAt", 0).takeIf { it > 0 } ?: System.currentTimeMillis(),
                         item.longOrNull("durationMs"), item.stringOrNull("album"), item.stringOrNull("artist"),
                         item.stringOrNull("genre"), item.intOrNull("track"), item.stringOrNull("artworkFileName"),
-                        item.stringOrNull("sourceFolder"), item.optBoolean("metadataScanned"))
-                    if (fileFor(song).exists()) add(song)
+                        item.stringOrNull("sourceFolder"), item.optBoolean("metadataScanned"),
+                        item.stringOrNull("contentUri"), item.optLong("sizeBytes"))
+                    if (song.contentUri != null || fileFor(song).exists()) add(song)
                 }
             }
         }
@@ -343,7 +433,8 @@ class SongLibrary(private val context: Context) {
                 .put("favorite", song.favorite).put("favoritedAt", song.favoritedAt).put("importedAt", song.importedAt)
                 .put("durationMs", song.durationMs).put("album", song.album).put("artist", song.artist)
                 .put("genre", song.genre).put("track", song.track).put("artworkFileName", song.artworkFileName)
-                .put("sourceFolder", song.sourceFolder).put("metadataScanned", song.metadataScanned))
+                .put("sourceFolder", song.sourceFolder).put("metadataScanned", song.metadataScanned)
+                .put("contentUri", song.contentUri).put("sizeBytes", song.sizeBytes))
         }
         atomicWrite(catalog, array.toString())
     }

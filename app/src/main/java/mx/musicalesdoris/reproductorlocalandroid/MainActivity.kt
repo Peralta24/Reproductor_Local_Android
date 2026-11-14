@@ -1,6 +1,9 @@
 package mx.musicalesdoris.reproductorlocalandroid
 
 import android.content.Intent
+import android.Manifest
+import android.content.pm.PackageManager
+import android.os.Build
 import android.graphics.BitmapFactory
 import android.os.Bundle
 import android.util.Log
@@ -9,6 +12,7 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.core.content.ContextCompat
 import androidx.activity.viewModels
 import androidx.lifecycle.lifecycleScope
 import kotlinx.coroutines.Dispatchers
@@ -53,6 +57,15 @@ class MainActivity : ComponentActivity() {
     private val importer = registerForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
         if (uris.isNotEmpty()) player.importSongs(uris)
     }
+    private val audioPermission = registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        if (granted) scanDeviceMusic()
+    }
+    private fun requiredAudioPermission(): String = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU)
+        Manifest.permission.READ_MEDIA_AUDIO else Manifest.permission.READ_EXTERNAL_STORAGE
+    private fun scanDeviceMusic() {
+        val library = player.library
+        lifecycleScope.launch(Dispatchers.IO) { library.scanDeviceMusic() }
+    }
     private var coverPlaylistId: String? = null
     private val coverImporter = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         val id = coverPlaylistId
@@ -67,6 +80,8 @@ class MainActivity : ComponentActivity() {
         window.statusBarColor = android.graphics.Color.TRANSPARENT
         window.navigationBarColor = android.graphics.Color.TRANSPARENT
         handleAction(intent)
+        if (ContextCompat.checkSelfPermission(this, requiredAudioPermission()) != PackageManager.PERMISSION_GRANTED)
+            audioPermission.launch(requiredAudioPermission())
         setContent {
             val selectedId by themes.selectedId.collectAsState()
             val theme = PlayerTheme.all.firstOrNull { it.id == selectedId } ?: PlayerTheme.all.first()
@@ -86,6 +101,11 @@ class MainActivity : ComponentActivity() {
                 }
             }
         }
+    }
+    override fun onResume() {
+        super.onResume()
+        if (ContextCompat.checkSelfPermission(this, requiredAudioPermission()) == PackageManager.PERMISSION_GRANTED)
+            scanDeviceMusic()
     }
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
