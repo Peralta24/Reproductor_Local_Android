@@ -21,6 +21,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
+import java.io.FileOutputStream
 import java.security.DigestInputStream
 import java.security.MessageDigest
 import java.text.Normalizer
@@ -30,6 +31,7 @@ import mx.musicalesdoris.reproductorlocalandroid.library.ArtistSummary
 import mx.musicalesdoris.reproductorlocalandroid.library.GenreSummary
 import mx.musicalesdoris.reproductorlocalandroid.library.FolderSummary
 import mx.musicalesdoris.reproductorlocalandroid.library.PlaylistSummary
+import mx.musicalesdoris.reproductorlocalandroid.library.components.artwork.calculateArtworkSampleSize
 
 data class Song(
     val id: String, val fileName: String, val title: String, val favorite: Boolean = false,
@@ -61,6 +63,8 @@ class SongLibrary(private val context: Context) {
     private val directory = File(context.filesDir, "Songs").apply { mkdirs() }
     private val artworkDirectory = File(context.filesDir, "AlbumArtwork").apply { mkdirs() }
     private val playlistCoverDirectory = File(context.filesDir, "PlaylistCovers").apply { mkdirs() }
+    private val favoriteArtworkDirectory = File(context.filesDir, "FavoriteArtwork").apply { mkdirs() }
+    private val favoriteArtworkPreferences = context.getSharedPreferences("favorite_artwork", Context.MODE_PRIVATE)
     private val catalog = File(context.filesDir, "songs.json")
     private val playlistCatalog = File(context.filesDir, "playlists.json")
     private val pendingRelinkCatalog = File(context.filesDir, "pending-relinks.json")
@@ -78,6 +82,8 @@ class SongLibrary(private val context: Context) {
     val playlists = _playlists.asStateFlow()
     private val _pendingRelinks = MutableStateFlow(readPendingRelinks())
     val pendingRelinks = _pendingRelinks.asStateFlow()
+    private val _favoriteArtwork = MutableStateFlow(readFavoriteArtworkFile())
+    val favoriteArtwork = _favoriteArtwork.asStateFlow()
     init {
         CoroutineScope(Dispatchers.IO).launch {
             enrichMissingMetadata()
@@ -319,6 +325,68 @@ class SongLibrary(private val context: Context) {
         return name?.let { File(artworkDirectory, it) }?.takeIf(File::exists)
     }
     fun coverFor(playlist: Playlist): File? = playlist.coverFileName?.let { File(playlistCoverDirectory, it) }?.takeIf(File::exists)
+    private fun readFavoriteArtworkFile(): File? = favoriteArtworkPreferences.getString("fileName", null)
+        ?.takeIf { it.isNotBlank() && File(it).name == it }
+        ?.let { File(favoriteArtworkDirectory, it).takeIf(File::isFile) }
+
+    @Synchronized fun setFavoriteArtwork(uri: Uri): Boolean {
+        val previous = favoriteArtworkPreferences.getString("fileName", null)
+        val fileName = "favorites-${UUID.randomUUID()}.jpg"
+        val destination = File(favoriteArtworkDirectory, fileName)
+        val temporary = File(favoriteArtworkDirectory, "$fileName.tmp")
+        var bitmap: Bitmap? = null
+        var destinationCreated = false
+        return try {
+            val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+            val readable = context.contentResolver.openInputStream(uri)?.use {
+                BitmapFactory.decodeStream(it, null, bounds)
+                true
+            } ?: false
+            if (!readable || bounds.outWidth <= 0 || bounds.outHeight <= 0 ||
+                bounds.outWidth > 60_000 || bounds.outHeight > 60_000) {
+                error("La imagen no es válida o no se puede leer.")
+            }
+            val sampleSize = calculateArtworkSampleSize(bounds.outWidth, bounds.outHeight, 1200)
+            bitmap = context.contentResolver.openInputStream(uri)?.use { input ->
+                BitmapFactory.decodeStream(input, null, BitmapFactory.Options().apply { inSampleSize = sampleSize })
+            } ?: error("No se pudo decodificar la imagen.")
+            FileOutputStream(temporary).use { output ->
+                if (!bitmap!!.compress(Bitmap.CompressFormat.JPEG, 88, output)) error("No se pudo guardar la imagen.")
+                output.fd.sync()
+            }
+            if (!temporary.renameTo(destination)) error("No se pudo preparar la nueva portada.")
+            destinationCreated = true
+            if (!favoriteArtworkPreferences.edit().putString("fileName", fileName).commit()) {
+                error("No se pudo guardar la referencia de la portada.")
+            }
+            _favoriteArtwork.value = destination
+            previous?.takeIf { it != fileName && File(it).name == it }
+                ?.let { File(favoriteArtworkDirectory, it).delete() }
+            error.value = null
+            true
+        } catch (exception: Exception) {
+            temporary.delete()
+            if (destinationCreated && favoriteArtworkPreferences.getString("fileName", null) != fileName) {
+                destination.delete()
+            }
+            error.value = "No se pudo cambiar la portada de Favoritos: ${exception.localizedMessage ?: "error de almacenamiento"}"
+            false
+        } finally {
+            bitmap?.recycle()
+        }
+    }
+
+    @Synchronized fun removeFavoriteArtwork(): Boolean {
+        val previous = favoriteArtworkPreferences.getString("fileName", null)
+        if (!favoriteArtworkPreferences.edit().remove("fileName").commit()) {
+            error.value = "No se pudo restaurar la portada automática de Favoritos."
+            return false
+        }
+        _favoriteArtwork.value = null
+        previous?.takeIf { File(it).name == it }?.let { File(favoriteArtworkDirectory, it).delete() }
+        error.value = null
+        return true
+    }
     fun songsIn(playlist: Playlist): List<Song> = playlist.songIds.mapNotNull { id -> _songs.value.firstOrNull { it.id == id } }
     fun songsInAlbum(key: String): List<Song> = _songs.value.filter { it.albumKey() == key }
         .sortedWith(compareBy<Song> { it.track ?: Int.MAX_VALUE }.thenBy { it.importedAt })

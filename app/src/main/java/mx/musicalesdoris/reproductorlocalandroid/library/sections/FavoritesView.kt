@@ -1,14 +1,21 @@
 package mx.musicalesdoris.reproductorlocalandroid.library.sections
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.runtime.*
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
@@ -22,10 +29,20 @@ import mx.musicalesdoris.reproductorlocalandroid.library.components.artwork.Artw
 import mx.musicalesdoris.reproductorlocalandroid.ui.theme.SoniqBodyFont
 import mx.musicalesdoris.reproductorlocalandroid.ui.theme.SoniqHeadingFont
 import mx.musicalesdoris.reproductorlocalandroid.ui.theme.SoniqMonoFont
+import mx.musicalesdoris.reproductorlocalandroid.ui.theme.SoniqPalette
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 
 @Composable
+@OptIn(ExperimentalFoundationApi::class)
 fun FavoritesView(songs: List<Song>, state: PlayerState, player: PlayerViewModel, theme: PlayerTheme) {
     var newestFirst by remember { mutableStateOf(true) }
+    var coverMenuExpanded by remember { mutableStateOf(false) }
+    val favoriteArtwork by player.library.favoriteArtwork.collectAsState()
+    val scope = rememberCoroutineScope()
+    val artworkPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri != null) scope.launch(Dispatchers.IO) { player.library.setFavoriteArtwork(uri) }
+    }
     val favorites = remember(songs, newestFirst) {
         songs.filter { it.favorite }.sortedBy { it.favoritedAt ?: it.importedAt }
             .let { if (newestFirst) it.reversed() else it }
@@ -34,8 +51,37 @@ fun FavoritesView(songs: List<Song>, state: PlayerState, player: PlayerViewModel
         Column(Modifier.fillMaxWidth()) {
         if (theme.id == "soniq") {
             Column(Modifier.fillMaxWidth().padding(top = 14.dp, bottom = 14.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-                val art = favorites.firstOrNull()?.let { player.library.artworkFor(it) }
-                ArtworkView(art, theme, 172.dp, "soniq-favorites")
+                val automaticArtwork = favorites.firstOrNull()?.let { player.library.artworkFor(it) }
+                Box(Modifier.size(172.dp).clip(RoundedCornerShape(7.dp)).combinedClickable(
+                    onClick = { coverMenuExpanded = true },
+                    onLongClick = { coverMenuExpanded = true },
+                    onLongClickLabel = "Cambiar portada de Favoritos"
+                )) {
+                    ArtworkView(favoriteArtwork ?: automaticArtwork, theme, 172.dp, "soniq-favorites")
+                    DropdownMenu(
+                        expanded = coverMenuExpanded,
+                        onDismissRequest = { coverMenuExpanded = false },
+                        modifier = Modifier.background(
+                            if (theme.id == "soniq") SoniqPalette.paper else theme.surface,
+                            RoundedCornerShape(12.dp)
+                        )
+                    ) {
+                        DropdownMenuItem(text = {
+                            Text("Cambiar portada", color = if (theme.id == "soniq") SoniqPalette.ink else theme.foreground,
+                                fontFamily = if (theme.id == "soniq") SoniqBodyFont else androidx.compose.ui.text.font.FontFamily.Default)
+                        }, onClick = {
+                            coverMenuExpanded = false
+                            artworkPicker.launch(arrayOf("image/*"))
+                        })
+                        if (favoriteArtwork != null) DropdownMenuItem(text = {
+                            Text("Restaurar portada automática", color = if (theme.id == "soniq") SoniqPalette.secondaryText else theme.muted,
+                                fontFamily = if (theme.id == "soniq") SoniqBodyFont else androidx.compose.ui.text.font.FontFamily.Default)
+                        }, onClick = {
+                            coverMenuExpanded = false
+                            scope.launch(Dispatchers.IO) { player.library.removeFavoriteArtwork() }
+                        })
+                    }
+                }
                 Spacer(Modifier.height(17.dp))
                 Text("Favoritos", color = theme.foreground, fontFamily = SoniqHeadingFont,
                     fontSize = 29.sp, fontWeight = FontWeight.Bold)
