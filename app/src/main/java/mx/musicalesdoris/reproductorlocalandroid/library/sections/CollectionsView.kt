@@ -67,7 +67,7 @@ fun AlbumsView(library: SongLibrary, theme: PlayerTheme, onOpen: (AlbumSummary) 
     Column {
         Text("Tus álbumes", color = theme.foreground, fontFamily = if (theme.id == "soniq") SoniqHeadingFont else androidx.compose.ui.text.font.FontFamily.Default,
             fontSize = if (theme.id == "soniq") 25.sp else 28.sp,
-            fontWeight = FontWeight.Bold)
+            fontWeight = FontWeight.Bold, modifier = Modifier.padding(top = if (theme.id == "soniq") 12.dp else 0.dp))
         CollectionMeta(albums.size, "álbum", "álbumes", newestFirst, theme) { newestFirst = !newestFirst }
         if (albums.isEmpty()) EmptyCollection("Aún no hay álbumes", theme)
         else LazyVerticalGrid(columns = GridCells.Fixed(2), horizontalArrangement = Arrangement.spacedBy(14.dp),
@@ -87,7 +87,7 @@ fun ArtistsView(library: SongLibrary, theme: PlayerTheme, onOpen: (ArtistSummary
     Column {
         Text("Tus artistas", color = theme.foreground, fontFamily = if (theme.id == "soniq") SoniqHeadingFont else androidx.compose.ui.text.font.FontFamily.Default,
             fontSize = if (theme.id == "soniq") 25.sp else 28.sp,
-            fontWeight = FontWeight.Bold)
+            fontWeight = FontWeight.Bold, modifier = Modifier.padding(top = if (theme.id == "soniq") 12.dp else 0.dp))
         CollectionMeta(artists.size, "artista", "artistas", newestFirst, theme) { newestFirst = !newestFirst }
         if (artists.isEmpty()) EmptyCollection("Aún no hay artistas", theme)
         else LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -106,7 +106,7 @@ fun GenresView(library: SongLibrary, theme: PlayerTheme, onOpen: (String) -> Uni
     Column {
         Text("Tus géneros", color = theme.foreground, fontFamily = if (theme.id == "soniq") SoniqHeadingFont else androidx.compose.ui.text.font.FontFamily.Default,
             fontSize = if (theme.id == "soniq") 25.sp else 28.sp,
-            fontWeight = FontWeight.Bold)
+            fontWeight = FontWeight.Bold, modifier = Modifier.padding(top = if (theme.id == "soniq") 12.dp else 0.dp))
         CollectionMeta(genres.size, "género", "géneros", newestFirst, theme) { newestFirst = !newestFirst }
         if (genres.isEmpty()) EmptyCollection("Aún no hay géneros", theme)
         else LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -122,7 +122,7 @@ fun FoldersView(library: SongLibrary, theme: PlayerTheme, onOpen: (String) -> Un
     Column {
         Text("Tus carpetas", color = theme.foreground, fontFamily = if (theme.id == "soniq") SoniqHeadingFont else androidx.compose.ui.text.font.FontFamily.Default,
             fontSize = if (theme.id == "soniq") 25.sp else 28.sp,
-            fontWeight = FontWeight.Bold)
+            fontWeight = FontWeight.Bold, modifier = Modifier.padding(top = if (theme.id == "soniq") 12.dp else 0.dp))
         CollectionMeta(folders.size, "carpeta", "carpetas", newestFirst, theme) { newestFirst = !newestFirst }
         if (folders.isEmpty()) EmptyCollection("Aún no hay carpetas", theme)
         else LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
