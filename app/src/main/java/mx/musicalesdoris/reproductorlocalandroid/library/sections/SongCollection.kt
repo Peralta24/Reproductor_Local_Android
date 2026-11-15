@@ -19,24 +19,30 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.graphics.Color
 import mx.musicalesdoris.reproductorlocalandroid.ui.theme.SoniqBodyFont
 import mx.musicalesdoris.reproductorlocalandroid.ui.theme.SoniqPalette
-import mx.musicalesdoris.reproductorlocalandroid.PlayerState
 import mx.musicalesdoris.reproductorlocalandroid.PlayerTheme
 import mx.musicalesdoris.reproductorlocalandroid.PlayerViewModel
 import mx.musicalesdoris.reproductorlocalandroid.Song
+import mx.musicalesdoris.reproductorlocalandroid.library.components.artwork.rememberArtworkRevisionToken
 import mx.musicalesdoris.reproductorlocalandroid.library.components.song.SongRow
 import kotlinx.coroutines.delay
 
 @Composable
-fun SongCollection(songs: List<Song>, state: PlayerState, player: PlayerViewModel,
+fun SongCollection(songs: List<Song>, selectedId: String?, player: PlayerViewModel,
                    theme: PlayerTheme, emptyTitle: String = "No hay canciones",
                    playlistId: String? = null, modifier: Modifier = Modifier,
                    listState: LazyListState? = null,
-                   headerContent: (@Composable () -> Unit)? = null) {
+                   headerContent: (@Composable () -> Unit)? = null,
+                   playlistSongIds: List<String>? = null,
+                   artworkRevision: Any? = songs) {
     var pendingDelete by remember { mutableStateOf<Song?>(null) }
     var songToAdd by remember { mutableStateOf<Song?>(null) }
     var addedToast by remember { mutableStateOf<String?>(null) }
-    val playlists by player.library.playlists.collectAsState()
+    val playlistIds = playlistSongIds.orEmpty()
+    val playlistPositions = remember(playlistId, playlistSongIds) {
+        if (playlistId == null) emptyMap() else firstPlaylistSongPositions(playlistIds)
+    }
     val effectiveListState = listState ?: rememberLazyListState()
+    val artworkRevisionToken = rememberArtworkRevisionToken(artworkRevision, player.library)
     LaunchedEffect(addedToast) {
         if (addedToast != null) {
             delay(2600)
@@ -53,9 +59,9 @@ fun SongCollection(songs: List<Song>, state: PlayerState, player: PlayerViewMode
             } else itemsIndexed(songs, key = { _, song -> song.id }) { itemIndex, song ->
                 Column(Modifier.fillMaxWidth()) {
                     if (itemIndex > 0) Spacer(Modifier.height(if (theme.id == "soniq") 2.dp else 8.dp))
-                    val ids = playlistId?.let { id -> player.library.playlists.value.firstOrNull { it.id == id }?.songIds }.orEmpty()
-                    val playlistIndex = ids.indexOf(song.id)
-                    SongRow(song, song.id == state.selectedId, player.library.artworkFor(song), theme,
+                    val ids = playlistIds
+                    val playlistIndex = playlistPositions[song.id] ?: -1
+                    SongRow(song, song.id == selectedId, player.library.artworkFor(song), theme,
                         onSelect = { player.playCollection(songs, startingWith = song) },
                         onFavorite = { player.library.toggleFavorite(song.id) },
                         onDelete = {
@@ -68,7 +74,7 @@ fun SongCollection(songs: List<Song>, state: PlayerState, player: PlayerViewMode
                         onMoveDown = if (playlistId != null && playlistIndex >= 0 && playlistIndex < ids.lastIndex) ({
                             player.library.setPlaylistSongs(playlistId, ids.toMutableList().apply { add(playlistIndex + 1, removeAt(playlistIndex)) })
                         }) else null,
-                        onAddToPlaylist = { songToAdd = song })
+                        onAddToPlaylist = { songToAdd = song }, artworkRevision = artworkRevisionToken)
                 }
             }
         }
@@ -92,9 +98,18 @@ fun SongCollection(songs: List<Song>, state: PlayerState, player: PlayerViewMode
             shape = RoundedCornerShape(18.dp))
     }
     songToAdd?.let { song ->
-        if (theme.id == "soniq") PlaylistDestinationSheet(song, playlists, player, theme,
+        AddSongToPlaylistDialog(song, player, theme,
             onDismiss = { songToAdd = null }, onAdded = { addedToast = it })
-        else AlertDialog(onDismissRequest = { songToAdd = null },
+    }
+}
+
+@Composable
+private fun AddSongToPlaylistDialog(song: Song, player: PlayerViewModel, theme: PlayerTheme,
+                                   onDismiss: () -> Unit, onAdded: (String) -> Unit) {
+    val playlists by player.library.playlists.collectAsState()
+    if (theme.id == "soniq") PlaylistDestinationSheet(song, playlists, player, theme,
+        onDismiss = onDismiss, onAdded = onAdded)
+    else AlertDialog(onDismissRequest = onDismiss,
             title = { Text("Agregar a una lista", color = if (theme.id == "soniq") SoniqPalette.ink else theme.foreground) },
             text = {
                 if (playlists.isEmpty()) Text("Todavía no tienes listas creadas.")
@@ -103,7 +118,7 @@ fun SongCollection(songs: List<Song>, state: PlayerState, player: PlayerViewMode
                         val alreadyIncluded = song.id in playlist.songIds
                         Row(Modifier.fillMaxWidth().clickable(enabled = !alreadyIncluded) {
                             player.library.setPlaylistSongs(playlist.id, playlist.songIds + song.id)
-                            songToAdd = null
+                            onDismiss()
                         }.padding(horizontal = 10.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
                             Text(if (alreadyIncluded) "✓" else "+", color = SoniqPalette.electricBlue,
                                 fontFamily = SoniqBodyFont, modifier = Modifier.width(30.dp))
@@ -117,8 +132,7 @@ fun SongCollection(songs: List<Song>, state: PlayerState, player: PlayerViewMode
                     }
                 }
             },
-            confirmButton = { TextButton(onClick = { songToAdd = null }) { Text("Cerrar") } },
+            confirmButton = { TextButton(onClick = onDismiss) { Text("Cerrar") } },
             containerColor = if (theme.id == "soniq") Color(0xFFEAF2FB) else theme.background,
             shape = RoundedCornerShape(18.dp))
-    }
 }

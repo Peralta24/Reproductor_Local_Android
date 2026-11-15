@@ -199,7 +199,7 @@ class PlaybackEngine private constructor(private val application: Application) {
     private var hasStartedPlayback = false
     private var lastProgressPersistedAtMs = 0L
     private var currentArtwork: android.graphics.Bitmap? = null
-    private var artworkRequestKey: String? = null
+    @Volatile private var artworkRequestKey: String? = null
     private val handler = Handler(Looper.getMainLooper())
     private val ticker = object : Runnable {
         override fun run() {
@@ -245,6 +245,14 @@ class PlaybackEngine private constructor(private val application: Application) {
                 val selected = songs.firstOrNull { it.id == _state.value.selectedId }
                 if (selected != null) publishArtwork(selected)
                 publishSession(identityChanged)
+            }
+        }
+        scope.launch {
+            library.artworkIndexRevision.collect {
+                selectedSong(library.songs.value)?.let { song ->
+                    publishArtwork(song)
+                    publishSession(true)
+                }
             }
         }
         publishSession(true)
@@ -597,14 +605,17 @@ class PlaybackEngine private constructor(private val application: Application) {
         }
     }
     private fun publishArtwork(song: Song) {
-        val file = library.artworkFor(song) ?: return
-        val requestKey = "${song.id}:${song.artworkFileName}:${file.lastModified()}:${file.length()}"
+        val file = library.artworkFor(song) ?: run {
+            artworkRequestKey = null
+            return
+        }
+        val requestKey = "${song.id}:${file.absolutePath}:${file.lastModified()}:${file.length()}"
         if (artworkRequestKey == requestKey) return
         artworkRequestKey = requestKey
         scope.launch {
             val bitmap = mx.musicalesdoris.reproductorlocalandroid.library.components.artwork.ArtworkBitmapLoader.decodeFile(file, 512)
             withContext(Dispatchers.Main) {
-                if (_state.value.selectedId == song.id) {
+                if (_state.value.selectedId == song.id && artworkRequestKey == requestKey) {
                     currentArtwork = bitmap
                     publishSession(true)
                 }

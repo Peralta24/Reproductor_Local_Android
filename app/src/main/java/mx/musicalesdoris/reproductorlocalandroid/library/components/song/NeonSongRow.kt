@@ -9,7 +9,7 @@ import java.io.File
 fun NeonSongRow(song: Song, selected: Boolean, artwork: File?, theme: PlayerTheme,
                     onSelect: () -> Unit, onFavorite: () -> Unit, onDelete: () -> Unit,
                     destructiveTitle: String, onMoveUp: (() -> Unit)?, onMoveDown: (() -> Unit)?,
-                    onAddToPlaylist: (() -> Unit)? = null) {
+                    onAddToPlaylist: (() -> Unit)? = null, artworkRevision: Any? = null) {
     SongRowLayout(song, selected, artwork, theme, onSelect, onFavorite, onDelete,
-        destructiveTitle, onMoveUp, onMoveDown, "neon", onAddToPlaylist)
+        destructiveTitle, onMoveUp, onMoveDown, "neon", onAddToPlaylist, artworkRevision)
 }

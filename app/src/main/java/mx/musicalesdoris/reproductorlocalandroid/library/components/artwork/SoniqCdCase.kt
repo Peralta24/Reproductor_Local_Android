@@ -25,8 +25,9 @@ import java.io.File
 
 /** Dynamic artwork framed as the reusable SONIQ CD jewel case from ReproV1. */
 @Composable
-fun SoniqCdCase(file: File?, theme: PlayerTheme, size: Dp, seed: String = "") {
-    val artwork = rememberArtworkBitmap(file, size - 10.dp)
+fun SoniqCdCase(file: File?, theme: PlayerTheme, size: Dp, seed: String = "",
+                artworkRevision: Any? = null) {
+    val artwork = rememberArtworkBitmap(file, size - 10.dp, artworkRevision)
     val caseShape = RoundedCornerShape(5.dp)
     Box(Modifier.size(size).shadow(8.dp, caseShape).clip(caseShape)
         .background(Brush.verticalGradient(listOf(Color(0xFF59606A), Color(0xFF151A22), Color(0xFF353B44))))
@@ -35,7 +36,7 @@ fun SoniqCdCase(file: File?, theme: PlayerTheme, size: Dp, seed: String = "") {
         if (artwork != null) {
             Image(artwork, "Carátula", Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
         } else {
-            ArtworkView(null, theme, size - 10.dp, seed)
+            ArtworkView(null, theme, size - 10.dp, seed, artworkRevision = artworkRevision)
             Box(Modifier.fillMaxSize().background(Color(0xFF09152A).copy(alpha = .18f)))
             Box(Modifier.fillMaxSize(.91f).clip(CircleShape)
                 .background(Brush.sweepGradient(listOf(

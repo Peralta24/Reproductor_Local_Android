@@ -6,6 +6,7 @@ import mx.musicalesdoris.reproductorlocalandroid.library.ArtistSummary
 import java.io.File
 
 @Composable
-fun SoniqArtistRow(artist: ArtistSummary, artwork: File?, theme: PlayerTheme, onClick: () -> Unit) {
-    ArtistRowLayout(artist, artwork, theme, onClick)
+fun SoniqArtistRow(artist: ArtistSummary, artwork: File?, theme: PlayerTheme,
+                   artworkRevision: Any? = null, onClick: () -> Unit) {
+    ArtistRowLayout(artist, artwork, theme, artworkRevision, onClick)
 }

@@ -67,7 +67,7 @@ fun LibraryScreen(theme: PlayerTheme, songs: List<Song>, state: PlayerState, pla
                 Column(Modifier.weight(1f).padding(horizontal = 20.dp)) {
                     val detail = detailStack.lastOrNull()
                     if (detail != null) {
-                        DetailView(detail.first, detail.second, state, player, theme,
+                        DetailView(detail.first, detail.second, state, player, songs, playlists, theme,
                             onBack = { detailStack.removeAt(detailStack.lastIndex) },
                             onEdit = { editing = it }, onAdd = { choosingSongs = it.id },
                             onCover = chooseCover,
@@ -77,7 +77,7 @@ fun LibraryScreen(theme: PlayerTheme, songs: List<Song>, state: PlayerState, pla
                     } else when (section) {
                         LibrarySection.SONGS -> SongsView(songs, state, player, theme)
                         LibrarySection.FAVORITES -> FavoritesView(songs, state, player, theme)
-                        LibrarySection.PLAYLISTS -> PlaylistsView(player.library, playlists, theme,
+                        LibrarySection.PLAYLISTS -> PlaylistsView(player.library, songs, playlists, theme,
                             onCreate = { creating = true },
                             onOpen = { detailStack.add("playlist" to it.id) },
                             onEdit = { editing = it }, onDelete = { deletePlaylist = it })

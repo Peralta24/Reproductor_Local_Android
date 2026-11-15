@@ -28,6 +28,7 @@ import mx.musicalesdoris.reproductorlocalandroid.Song
 import mx.musicalesdoris.reproductorlocalandroid.albumKey
 import mx.musicalesdoris.reproductorlocalandroid.library.components.album.AlbumCard
 import mx.musicalesdoris.reproductorlocalandroid.library.components.artwork.ArtworkView
+import mx.musicalesdoris.reproductorlocalandroid.library.components.artwork.rememberArtworkRevisionToken
 import mx.musicalesdoris.reproductorlocalandroid.library.components.artwork.SoniqCdCase
 import mx.musicalesdoris.reproductorlocalandroid.library.components.artwork.PlaylistPlaceholderCover
 import mx.musicalesdoris.reproductorlocalandroid.library.components.header.HeaderMenu
@@ -39,19 +40,23 @@ import mx.musicalesdoris.reproductorlocalandroid.ui.theme.soniqClickable
 
 @Composable
 fun DetailView(kind: String, key: String, state: PlayerState, player: PlayerViewModel,
+               catalog: List<Song>, playlists: List<Playlist>,
                theme: PlayerTheme, onBack: () -> Unit, onEdit: (Playlist) -> Unit,
                onAdd: (Playlist) -> Unit, onCover: (String) -> Unit,
                onOpenAlbum: (String) -> Unit, onImport: () -> Unit = {},
                onPlayer: () -> Unit = {}, onThemes: () -> Unit = {},
                onProfile: () -> Unit = {}, onEqualizer: () -> Unit = {}) {
     val library = player.library
-    val playlist = library.playlists.value.firstOrNull { it.id == key }
-    val members = when (kind) {
-        "album" -> library.songsInAlbum(key)
-        "artist" -> library.songsByArtist(key)
-        "genre" -> library.songsInGenre(key)
-        "folder" -> library.songsInFolder(key)
-        else -> playlist?.let(library::songsIn).orEmpty()
+    val artworkRevisionToken = rememberArtworkRevisionToken(catalog, library)
+    val playlist = remember(playlists, key) { playlists.firstOrNull { it.id == key } }
+    val members = remember(catalog, playlists, library, kind, key) {
+        when (kind) {
+            "album" -> library.songsInAlbum(key)
+            "artist" -> library.songsByArtist(key)
+            "genre" -> library.songsInGenre(key)
+            "folder" -> library.songsInFolder(key)
+            else -> playlist?.let(library::songsIn).orEmpty()
+        }
     }
     val title = when (kind) {
         "album" -> members.firstOrNull()?.album ?: "Álbum"
@@ -63,15 +68,30 @@ fun DetailView(kind: String, key: String, state: PlayerState, player: PlayerView
     var descending by remember(kind, key) { mutableStateOf(false) }
     val scrollState = remember(kind, key) { LazyListState() }
     val ordered = remember(members, descending) { if (descending) members.reversed() else members }
-    val artistAlbums = remember(library, kind, members) {
-        if (kind == "artist") library.albums().filter { album -> members.any { it.albumKey() == album.id } }
+    val artistAlbumIds = remember(kind, members) {
+        if (kind == "artist") members.mapNotNull { it.albumKey() }.toHashSet() else emptySet()
+    }
+    val artistAlbums = remember(catalog, library, kind, artistAlbumIds) {
+        if (kind == "artist") library.albums().filter { album -> album.id in artistAlbumIds }
         else emptyList()
     }
     val artistAlbumRows = remember(artistAlbums) { artistAlbums.chunked(2) }
-    val duration = if (members.all { it.durationMs != null }) {
-        val minutes = members.sumOf { it.durationMs ?: 0L } / 60000
-        if (minutes >= 60) "${minutes / 60} h ${minutes % 60} min" else "$minutes min"
-    } else "—"
+    val firstSongByAlbum = remember(catalog, kind) {
+        if (kind == "artist") {
+            buildMap {
+                catalog.forEach { song ->
+                    val albumId = song.albumKey()
+                    if (albumId != null && albumId !in this) put(albumId, song)
+                }
+            }
+        } else emptyMap()
+    }
+    val duration = remember(members) {
+        if (members.all { it.durationMs != null }) {
+            val minutes = members.sumOf { it.durationMs ?: 0L } / 60000
+            if (minutes >= 60) "${minutes / 60} h ${minutes % 60} min" else "$minutes min"
+        } else "—"
+    }
     val collectionHeader: @Composable () -> Unit = {
         Column(Modifier.fillMaxWidth()) {
             if (theme.id == "soniq") {
@@ -80,9 +100,10 @@ fun DetailView(kind: String, key: String, state: PlayerState, player: PlayerView
                     else -> members.firstOrNull()?.let(library::artworkFor)
                 }
                 Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
-                    if (kind == "album") SoniqCdCase(art, theme, 215.dp, key)
+                    if (kind == "album") SoniqCdCase(art, theme, 215.dp, key, artworkRevisionToken)
                     else if (kind == "playlist" && art == null) PlaylistPlaceholderCover(174.dp)
-                    else ArtworkView(art, theme, 174.dp, key, circular = kind == "artist")
+                    else ArtworkView(art, theme, 174.dp, key, circular = kind == "artist",
+                        artworkRevision = artworkRevisionToken)
                 }
                 Spacer(Modifier.height(18.dp))
             }
@@ -176,7 +197,8 @@ fun DetailView(kind: String, key: String, state: PlayerState, player: PlayerView
                         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(14.dp)) {
                             row.forEach { album ->
                                 Box(Modifier.weight(1f)) {
-                                    AlbumCard(album, library.songsInAlbum(album.id).firstOrNull()?.let(library::artworkFor), theme) {
+                                    AlbumCard(album, firstSongByAlbum[album.id]?.let(library::artworkFor), theme,
+                                        artworkRevision = artworkRevisionToken) {
                                         onOpenAlbum(album.id)
                                     }
                                 }
@@ -188,10 +210,11 @@ fun DetailView(kind: String, key: String, state: PlayerState, player: PlayerView
                 }
             }
         } else {
-            SongCollection(ordered, state, player, theme,
+            SongCollection(ordered, state.selectedId, player, theme,
                 emptyTitle = if (playlist != null) "Esta lista está vacía" else "No hay canciones",
                 playlistId = playlist?.id, modifier = Modifier.weight(1f),
-                listState = scrollState, headerContent = collectionHeader)
+                listState = scrollState, headerContent = collectionHeader,
+                playlistSongIds = playlist?.songIds, artworkRevision = artworkRevisionToken)
         }
     }
 }

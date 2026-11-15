@@ -27,6 +27,7 @@ import mx.musicalesdoris.reproductorlocalandroid.key
 import mx.musicalesdoris.reproductorlocalandroid.library.AlbumSummary
 import mx.musicalesdoris.reproductorlocalandroid.library.ArtistSummary
 import mx.musicalesdoris.reproductorlocalandroid.library.components.album.AlbumCard
+import mx.musicalesdoris.reproductorlocalandroid.library.components.artwork.rememberArtworkRevisionToken
 import mx.musicalesdoris.reproductorlocalandroid.library.components.artist.ArtistRow
 import mx.musicalesdoris.reproductorlocalandroid.library.components.playlist.PlaylistRow
 import mx.musicalesdoris.reproductorlocalandroid.library.components.genre.GenreRow
@@ -37,11 +38,13 @@ import mx.musicalesdoris.reproductorlocalandroid.ui.theme.SoniqMonoFont
 import mx.musicalesdoris.reproductorlocalandroid.ui.theme.SoniqPalette
 
 @Composable
-fun PlaylistsView(library: SongLibrary, playlists: List<Playlist>, theme: PlayerTheme,
+fun PlaylistsView(library: SongLibrary, songs: List<Song>, playlists: List<Playlist>, theme: PlayerTheme,
                   onCreate: () -> Unit, onOpen: (Playlist) -> Unit,
                   onEdit: (Playlist) -> Unit, onDelete: (Playlist) -> Unit) {
     var newestFirst by remember { mutableStateOf(true) }
-    val sorted = playlists.sortedBy { it.updatedAt }.let { if (newestFirst) it.reversed() else it }
+    val sorted = remember(playlists, newestFirst) {
+        playlists.sortedBy { it.updatedAt }.let { if (newestFirst) it.reversed() else it }
+    }
     Column {
         Row(Modifier.fillMaxWidth().padding(top = if (theme.id == "soniq") 12.dp else 0.dp), verticalAlignment = Alignment.CenterVertically) {
             Text("Tus listas", color = theme.foreground, fontFamily = if (theme.id == "soniq") SoniqHeadingFont else androidx.compose.ui.text.font.FontFamily.Default,
@@ -56,7 +59,8 @@ fun PlaylistsView(library: SongLibrary, playlists: List<Playlist>, theme: Player
         if (sorted.isEmpty()) EmptyCollection("Aún no hay listas", theme)
         else LazyColumn(verticalArrangement = Arrangement.spacedBy(if (theme.id == "soniq") 4.dp else 8.dp)) {
             items(sorted, key = { it.id }) { playlist ->
-                PlaylistRow(library.playlistSummary(playlist), library.coverFor(playlist), theme,
+                val summary = remember(playlist, songs) { library.playlistSummary(playlist) }
+                PlaylistRow(summary, library.coverFor(playlist), theme,
                     onOpen = { onOpen(playlist) }, onRename = { onEdit(playlist) }, onDelete = { onDelete(playlist) })
             }
         }
@@ -67,6 +71,7 @@ fun PlaylistsView(library: SongLibrary, playlists: List<Playlist>, theme: Player
 fun AlbumsView(library: SongLibrary, theme: PlayerTheme, onOpen: (AlbumSummary) -> Unit) {
     var newestFirst by remember { mutableStateOf(true) }
     val catalog by library.songs.collectAsState()
+    val artworkRevisionToken = rememberArtworkRevisionToken(catalog, library)
     val sortedAlbums = remember(catalog) { library.albums().sortedByDescending { it.latestImportedAt } }
     val albums = remember(sortedAlbums, newestFirst) { if (newestFirst) sortedAlbums else sortedAlbums.asReversed() }
     val artworkSongs = remember(catalog) { catalog.artworkRepresentatives { it.albumKey() } }
@@ -80,7 +85,7 @@ fun AlbumsView(library: SongLibrary, theme: PlayerTheme, onOpen: (AlbumSummary) 
             verticalArrangement = Arrangement.spacedBy(21.dp)) {
             items(albums, key = { it.id }) { album ->
                 val art = artworkSongs[album.id]?.let(library::artworkFor)
-                AlbumCard(album, art, theme) { onOpen(album) }
+                AlbumCard(album, art, theme, artworkRevision = artworkRevisionToken) { onOpen(album) }
             }
         }
     }
@@ -90,6 +95,7 @@ fun AlbumsView(library: SongLibrary, theme: PlayerTheme, onOpen: (AlbumSummary) 
 fun ArtistsView(library: SongLibrary, theme: PlayerTheme, onOpen: (ArtistSummary) -> Unit) {
     var newestFirst by remember { mutableStateOf(true) }
     val catalog by library.songs.collectAsState()
+    val artworkRevisionToken = rememberArtworkRevisionToken(catalog, library)
     val sortedArtists = remember(catalog) { library.artists().sortedByDescending { it.latestImportedAt } }
     val artists = remember(sortedArtists, newestFirst) { if (newestFirst) sortedArtists else sortedArtists.asReversed() }
     val artworkSongs = remember(catalog) { catalog.artworkRepresentatives { it.artist.key() } }
@@ -102,7 +108,7 @@ fun ArtistsView(library: SongLibrary, theme: PlayerTheme, onOpen: (ArtistSummary
         else LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
             items(artists, key = { it.id }) { artist ->
                 val art = artworkSongs[artist.id]?.let(library::artworkFor)
-                ArtistRow(artist, art, theme) { onOpen(artist) }
+                ArtistRow(artist, art, theme, artworkRevision = artworkRevisionToken) { onOpen(artist) }
             }
         }
     }
@@ -121,7 +127,10 @@ private inline fun List<Song>.artworkRepresentatives(keyFor: (Song) -> String?):
 @Composable
 fun GenresView(library: SongLibrary, theme: PlayerTheme, onOpen: (String) -> Unit) {
     var newestFirst by remember { mutableStateOf(true) }
-    val genres = library.genres().sortedBy { it.latestImportedAt }.let { if (newestFirst) it.reversed() else it }
+    val catalog by library.songs.collectAsState()
+    val genres = remember(catalog, newestFirst) {
+        library.genres().sortedBy { it.latestImportedAt }.let { if (newestFirst) it.reversed() else it }
+    }
     Column {
         Text("Tus géneros", color = theme.foreground, fontFamily = if (theme.id == "soniq") SoniqHeadingFont else androidx.compose.ui.text.font.FontFamily.Default,
             fontSize = if (theme.id == "soniq") 25.sp else 28.sp,
@@ -137,7 +146,10 @@ fun GenresView(library: SongLibrary, theme: PlayerTheme, onOpen: (String) -> Uni
 @Composable
 fun FoldersView(library: SongLibrary, theme: PlayerTheme, onOpen: (String) -> Unit) {
     var newestFirst by remember { mutableStateOf(true) }
-    val folders = library.folders().sortedBy { it.latestImportedAt }.let { if (newestFirst) it.reversed() else it }
+    val catalog by library.songs.collectAsState()
+    val folders = remember(catalog, newestFirst) {
+        library.folders().sortedBy { it.latestImportedAt }.let { if (newestFirst) it.reversed() else it }
+    }
     Column {
         Text("Tus carpetas", color = theme.foreground, fontFamily = if (theme.id == "soniq") SoniqHeadingFont else androidx.compose.ui.text.font.FontFamily.Default,
             fontSize = if (theme.id == "soniq") 25.sp else 28.sp,

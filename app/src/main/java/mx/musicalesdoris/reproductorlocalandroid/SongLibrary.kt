@@ -13,11 +13,14 @@ import android.provider.OpenableColumns
 import android.provider.DocumentsContract
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.collectLatest
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
@@ -31,6 +34,8 @@ import mx.musicalesdoris.reproductorlocalandroid.library.ArtistSummary
 import mx.musicalesdoris.reproductorlocalandroid.library.GenreSummary
 import mx.musicalesdoris.reproductorlocalandroid.library.FolderSummary
 import mx.musicalesdoris.reproductorlocalandroid.library.PlaylistSummary
+import mx.musicalesdoris.reproductorlocalandroid.library.components.artwork.ArtworkIndexCache
+import mx.musicalesdoris.reproductorlocalandroid.library.components.artwork.buildArtworkIndex
 import mx.musicalesdoris.reproductorlocalandroid.library.components.artwork.calculateArtworkSampleSize
 
 data class Song(
@@ -76,8 +81,10 @@ class SongLibrary(private val context: Context) {
     val error = MutableStateFlow<String?>(null)
     private val _songs = MutableStateFlow(readSongs())
     val songs = _songs.asStateFlow()
-    private data class ArtworkIndex(val songs: List<Song>, val byAlbum: Map<String, String>)
-    @Volatile private var artworkIndex: ArtworkIndex? = null
+    private val playlistSongLookup = PlaylistSongLookupIndex()
+    private val artworkIndexCache = ArtworkIndexCache()
+    val artworkIndexRevision = artworkIndexCache.revision
+    private val artworkIndexScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val _playlists = MutableStateFlow(readPlaylists())
     val playlists = _playlists.asStateFlow()
     private val _pendingRelinks = MutableStateFlow(readPendingRelinks())
@@ -85,6 +92,13 @@ class SongLibrary(private val context: Context) {
     private val _favoriteArtwork = MutableStateFlow(readFavoriteArtworkFile())
     val favoriteArtwork = _favoriteArtwork.asStateFlow()
     init {
+        artworkIndexScope.launch {
+            songs.collectLatest { catalog ->
+                artworkIndexCache.invalidateFor(catalog)
+                val index = withContext(Dispatchers.Default) { buildArtworkIndex(catalog) }
+                artworkIndexCache.publishIfCurrent(index) { _songs.value }
+            }
+        }
         CoroutineScope(Dispatchers.IO).launch {
             enrichMissingMetadata()
         }
@@ -315,16 +329,10 @@ class SongLibrary(private val context: Context) {
     }
     fun artworkFor(song: Song): File? {
         val catalog = _songs.value
-        val index = artworkIndex?.takeIf { it.songs === catalog } ?: ArtworkIndex(catalog,
-            catalog.mapNotNull { candidate ->
-                val key = candidate.albumKey()
-                val name = candidate.artworkFileName
-                if (key != null && name != null) key to name else null
-            }.toMap()).also { artworkIndex = it }
-        val name = song.artworkFileName ?: song.albumKey()?.let(index.byAlbum::get)
-        return name?.let { File(artworkDirectory, it) }?.takeIf(File::exists)
+        val name = artworkIndexCache.artworkName(song, catalog) ?: return null
+        return File(artworkDirectory, name)
     }
-    fun coverFor(playlist: Playlist): File? = playlist.coverFileName?.let { File(playlistCoverDirectory, it) }?.takeIf(File::exists)
+    fun coverFor(playlist: Playlist): File? = playlist.coverFileName?.let { File(playlistCoverDirectory, it) }
     private fun readFavoriteArtworkFile(): File? = favoriteArtworkPreferences.getString("fileName", null)
         ?.takeIf { it.isNotBlank() && File(it).name == it }
         ?.let { File(favoriteArtworkDirectory, it).takeIf(File::isFile) }
@@ -387,7 +395,7 @@ class SongLibrary(private val context: Context) {
         error.value = null
         return true
     }
-    fun songsIn(playlist: Playlist): List<Song> = playlist.songIds.mapNotNull { id -> _songs.value.firstOrNull { it.id == id } }
+    fun songsIn(playlist: Playlist): List<Song> = playlistSongLookup.resolve(playlist.songIds, _songs.value)
     fun songsInAlbum(key: String): List<Song> = _songs.value.filter { it.albumKey() == key }
         .sortedWith(compareBy<Song> { it.track ?: Int.MAX_VALUE }.thenBy { it.importedAt })
     fun songsByArtist(key: String): List<Song> = _songs.value.filter { it.artist.key() == key }
@@ -648,7 +656,7 @@ class SongLibrary(private val context: Context) {
         } finally { bitmap?.recycle() }
     }
     @Synchronized fun setPlaylistSongs(id: String, songIds: List<String>) {
-        val valid = songIds.distinct().filter { selected -> _songs.value.any { it.id == selected } }
+        val valid = validatedPlaylistSongIds(songIds, _songs.value)
         updatePlaylists(_playlists.value.map { if (it.id == id) it.copy(songIds = valid,
             updatedAt = System.currentTimeMillis()) else it })
     }
@@ -725,6 +733,30 @@ class SongLibrary(private val context: Context) {
         temporary.writeText(text)
         if (!temporary.renameTo(file)) { temporary.delete(); error("No se pudo guardar ${file.name}") }
     }
+}
+
+internal class PlaylistSongLookupIndex {
+    private var indexedCatalog: List<Song>? = null
+    private var songsById: Map<String, Song> = emptyMap()
+
+    @Synchronized
+    fun resolve(songIds: List<String>, catalog: List<Song>): List<Song> {
+        if (indexedCatalog !== catalog) {
+            val nextIndex = HashMap<String, Song>(catalog.size)
+            catalog.forEach { song ->
+                if (!nextIndex.containsKey(song.id)) nextIndex[song.id] = song
+            }
+            songsById = nextIndex
+            indexedCatalog = catalog
+        }
+        return songIds.mapNotNull(songsById::get)
+    }
+}
+
+internal fun validatedPlaylistSongIds(songIds: List<String>, catalog: List<Song>): List<String> {
+    val validIds = HashSet<String>(catalog.size)
+    catalog.forEach { validIds.add(it.id) }
+    return songIds.distinct().filter(validIds::contains)
 }
 
 internal fun songFolderName(song: Song, privateFolderName: String?): String =

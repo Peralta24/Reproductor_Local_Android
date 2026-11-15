@@ -5,14 +5,18 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -38,6 +42,7 @@ import mx.musicalesdoris.reproductorlocalandroid.PlayerViewModel
 import mx.musicalesdoris.reproductorlocalandroid.Playlist
 import mx.musicalesdoris.reproductorlocalandroid.Song
 import mx.musicalesdoris.reproductorlocalandroid.library.components.artwork.ArtworkView
+import mx.musicalesdoris.reproductorlocalandroid.library.components.artwork.rememberArtworkRevisionToken
 import mx.musicalesdoris.reproductorlocalandroid.ui.theme.SoniqBodyFont
 import mx.musicalesdoris.reproductorlocalandroid.ui.theme.SoniqHeadingFont
 import mx.musicalesdoris.reproductorlocalandroid.ui.theme.SoniqPalette
@@ -49,21 +54,28 @@ fun PlaylistSongPicker(playlist: Playlist, songs: List<Song>, player: PlayerView
     var category by remember { mutableStateOf<String?>(null) }
     var filter by remember { mutableStateOf<String?>(null) }
     val categories = listOf("Artistas", "Álbumes", "Canciones", "Carpetas")
-    val grouped = when (category) {
-        "Artistas" -> songs.groupBy { it.artist?.takeIf(String::isNotBlank) ?: "Artista desconocido" }
-        "Álbumes" -> songs.groupBy { it.album?.takeIf(String::isNotBlank) ?: "Álbum desconocido" }
-        "Carpetas" -> songs.groupBy(player.library::folderNameFor)
-        else -> emptyMap()
+    val artworkRevisionToken = rememberArtworkRevisionToken(songs, player.library)
+    val grouped = remember(songs, category, player.library) {
+        playlistPickerGroups(songs, category, player.library::folderNameFor)
     }
-    val candidates = when {
-        category == "Canciones" -> songs
-        filter != null -> grouped[filter].orEmpty()
-        else -> emptyList()
+    val candidates = remember(songs, category, filter, grouped) {
+        when {
+            category == "Canciones" -> songs
+            filter != null -> grouped[filter].orEmpty()
+            else -> emptyList()
+        }
     }
-    Dialog(onDismissRequest = onClose, properties = DialogProperties(usePlatformDefaultWidth = false)) {
+    val categoryCounts = remember(songs, player.library) {
+        playlistPickerCategoryCounts(songs, player.library::folderNameFor)
+    }
+    val groupNames = remember(grouped) { sortedPlaylistPickerGroupNames(grouped) }
+    Dialog(onDismissRequest = onClose, properties = DialogProperties(
+        usePlatformDefaultWidth = false,
+        decorFitsSystemWindows = false
+    )) {
         Column(Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(
             SoniqPalette.pageTop, SoniqPalette.pageMiddle, SoniqPalette.pageBottom
-        ))).padding(horizontal = 20.dp, vertical = 18.dp)) {
+        ))).windowInsetsPadding(WindowInsets.safeDrawing).padding(horizontal = 20.dp, vertical = 18.dp)) {
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                 if (category != null) Text("‹", color = SoniqPalette.ink, fontSize = 25.sp,
                     modifier = Modifier.clickable {
@@ -80,22 +92,23 @@ fun PlaylistSongPicker(playlist: Playlist, songs: List<Song>, player: PlayerView
                 color = SoniqPalette.secondaryText, fontFamily = SoniqBodyFont, fontSize = 11.sp,
                 modifier = Modifier.padding(bottom = 14.dp))
             when {
-                category == null -> LazyColumn(verticalArrangement = Arrangement.spacedBy(9.dp)) {
+                category == null -> LazyColumn(Modifier.weight(1f).fillMaxWidth(),
+                    contentPadding = PaddingValues(bottom = 80.dp),
+                    verticalArrangement = Arrangement.spacedBy(9.dp)) {
                     items(categories) { label ->
-                        PickerCategory(label, when (label) {
-                            "Artistas" -> songs.mapNotNull { it.artist?.takeIf(String::isNotBlank) }.distinct().size
-                            "Álbumes" -> songs.mapNotNull { it.album?.takeIf(String::isNotBlank) }.distinct().size
-                            "Carpetas" -> songs.map(player.library::folderNameFor).distinct().size
-                            else -> songs.size
-                        }) { category = label }
+                        PickerCategory(label, categoryCounts[label] ?: 0) { category = label }
                     }
                 }
-                category != "Canciones" && filter == null -> LazyColumn(verticalArrangement = Arrangement.spacedBy(7.dp)) {
-                    items(grouped.keys.sorted()) { name ->
+                category != "Canciones" && filter == null -> LazyColumn(Modifier.weight(1f).fillMaxWidth(),
+                    contentPadding = PaddingValues(bottom = 80.dp),
+                    verticalArrangement = Arrangement.spacedBy(7.dp)) {
+                    items(groupNames) { name ->
                         PickerCategory(name, grouped[name].orEmpty().size) { filter = name }
                     }
                 }
-                else -> LazyColumn(verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                else -> LazyColumn(Modifier.weight(1f).fillMaxWidth(),
+                    contentPadding = PaddingValues(bottom = 80.dp),
+                    verticalArrangement = Arrangement.spacedBy(3.dp)) {
                     items(candidates, key = { it.id }) { song ->
                         val included = song.id in playlist.songIds
                         Row(Modifier.fillMaxWidth().height(58.dp)
@@ -107,7 +120,8 @@ fun PlaylistSongPicker(playlist: Playlist, songs: List<Song>, player: PlayerView
                                 if (included) ids.remove(song.id) else ids.add(song.id)
                                 player.library.setPlaylistSongs(playlist.id, ids.toList())
                             }.padding(horizontal = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-                            ArtworkView(player.library.artworkFor(song), theme, 42.dp, song.id)
+                            ArtworkView(player.library.artworkFor(song), theme, 42.dp, song.id,
+                                artworkRevision = artworkRevisionToken)
                             Spacer(Modifier.width(10.dp))
                             Column(Modifier.weight(1f)) {
                                 Text(song.title, color = if (included) SoniqPalette.electricBlue else SoniqPalette.ink,
@@ -125,6 +139,29 @@ fun PlaylistSongPicker(playlist: Playlist, songs: List<Song>, player: PlayerView
         }
     }
 }
+
+internal fun playlistPickerGroups(
+    songs: List<Song>,
+    category: String?,
+    folderNameFor: (Song) -> String
+): Map<String, List<Song>> = when (category) {
+    "Artistas" -> songs.groupBy { it.artist?.takeIf(String::isNotBlank) ?: "Artista desconocido" }
+    "Álbumes" -> songs.groupBy { it.album?.takeIf(String::isNotBlank) ?: "Álbum desconocido" }
+    "Carpetas" -> songs.groupBy(folderNameFor)
+    else -> emptyMap()
+}
+
+internal fun playlistPickerCategoryCounts(
+    songs: List<Song>,
+    folderNameFor: (Song) -> String
+): Map<String, Int> = mapOf(
+    "Artistas" to songs.mapNotNull { it.artist?.takeIf(String::isNotBlank) }.distinct().size,
+    "Álbumes" to songs.mapNotNull { it.album?.takeIf(String::isNotBlank) }.distinct().size,
+    "Canciones" to songs.size,
+    "Carpetas" to songs.map(folderNameFor).distinct().size
+)
+
+internal fun sortedPlaylistPickerGroupNames(groups: Map<String, *>): List<String> = groups.keys.sorted()
 
 @Composable
 private fun PickerCategory(label: String, count: Int, onClick: () -> Unit) {

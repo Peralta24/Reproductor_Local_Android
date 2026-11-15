@@ -18,21 +18,22 @@ import mx.musicalesdoris.reproductorlocalandroid.ui.theme.SoniqBodyFont
 import java.io.File
 
 @Composable
-fun AlbumCard(album: AlbumSummary, artwork: File?, theme: PlayerTheme, onClick: () -> Unit) {
+fun AlbumCard(album: AlbumSummary, artwork: File?, theme: PlayerTheme,
+              artworkRevision: Any? = null, onClick: () -> Unit) {
     when (theme.variantFor(LibraryComponent.ALBUM)) {
-        "soniq" -> SoniqAlbumCard(album, artwork, theme, onClick)
-        "aurora" -> AuroraAlbumCard(album, artwork, theme, onClick)
-        else -> NeonAlbumCard(album, artwork, theme, onClick)
+        "soniq" -> SoniqAlbumCard(album, artwork, theme, artworkRevision, onClick)
+        "aurora" -> AuroraAlbumCard(album, artwork, theme, artworkRevision, onClick)
+        else -> NeonAlbumCard(album, artwork, theme, artworkRevision, onClick)
     }
 }
 
 @Composable
 internal fun AlbumCardLayout(album: AlbumSummary, artwork: File?, theme: PlayerTheme,
-                             onClick: () -> Unit, soniq: Boolean) {
+                             artworkRevision: Any?, onClick: () -> Unit, soniq: Boolean) {
     Column(Modifier.fillMaxWidth().clickable(onClick = onClick)) {
         BoxWithConstraints(Modifier.fillMaxWidth()) {
-            if (soniq) SoniqCdCase(artwork, theme, maxWidth, album.id)
-            else ArtworkView(artwork, theme, maxWidth, album.id)
+            if (soniq) SoniqCdCase(artwork, theme, maxWidth, album.id, artworkRevision)
+            else ArtworkView(artwork, theme, maxWidth, album.id, artworkRevision = artworkRevision)
         }
         Spacer(Modifier.height(8.dp))
         Text(album.title, color = theme.foreground, fontFamily = if (soniq) SoniqBodyFont else androidx.compose.ui.text.font.FontFamily.Default,

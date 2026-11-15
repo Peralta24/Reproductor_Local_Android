@@ -30,20 +30,31 @@ import mx.musicalesdoris.reproductorlocalandroid.ui.theme.SoniqMonoFont
 import mx.musicalesdoris.reproductorlocalandroid.ui.theme.SoniqPalette
 import mx.musicalesdoris.reproductorlocalandroid.ui.theme.soniqClickable
 import java.io.File
+import java.util.Locale
 
 @Composable
 internal fun SongRowLayout(song: Song, selected: Boolean, artwork: File?, theme: PlayerTheme,
                            onSelect: () -> Unit, onFavorite: () -> Unit, onDelete: () -> Unit,
                            destructiveTitle: String, onMoveUp: (() -> Unit)?, onMoveDown: (() -> Unit)?,
-                           variant: String, onAddToPlaylist: (() -> Unit)? = null) {
+                           variant: String, onAddToPlaylist: (() -> Unit)? = null,
+                           artworkRevision: Any? = null) {
     var expanded by remember { mutableStateOf(false) }
     val soniq = variant == "soniq"
-    val shape = RoundedCornerShape(if (variant == "aurora") 24.dp else if (soniq) 13.dp else 14.dp)
-    val background = when (variant) {
-        "soniq" -> if (selected) Brush.verticalGradient(listOf(Color(0xFFEAF2FB), Color(0xFFC0D8F0)))
-            else Brush.verticalGradient(listOf(Color.Transparent, Color.Transparent))
-        "aurora" -> Brush.verticalGradient(listOf(theme.surface, theme.surface))
-        else -> Brush.verticalGradient(listOf(theme.surface.copy(alpha = .45f), theme.surface.copy(alpha = .45f)))
+    val subtitle = remember(song.artist, song.album) { formatSongSubtitle(song.artist, song.album) }
+    val duration = remember(song.durationMs, Locale.getDefault()) { formatSongDuration(song.durationMs) }
+    val shape = remember(variant) {
+        RoundedCornerShape(if (variant == "aurora") 24.dp else if (soniq) 13.dp else 14.dp)
+    }
+    val background = remember(variant, selected, theme.surface) {
+        when (variant) {
+            "soniq" -> if (selected) Brush.verticalGradient(listOf(Color(0xFFEAF2FB), Color(0xFFC0D8F0)))
+                else Brush.verticalGradient(listOf(Color.Transparent, Color.Transparent))
+            "aurora" -> Brush.verticalGradient(listOf(theme.surface, theme.surface))
+            else -> {
+                val surface = theme.surface.copy(alpha = .45f)
+                Brush.verticalGradient(listOf(surface, surface))
+            }
+        }
     }
     Row(Modifier.fillMaxWidth().then(if (soniq) Modifier.height(52.dp) else Modifier)
         .background(background, shape)
@@ -55,7 +66,8 @@ internal fun SongRowLayout(song: Song, selected: Boolean, artwork: File?, theme:
         verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(if (soniq) 0.dp else 12.dp)) {
         Row(Modifier.weight(1f).then(if (soniq) Modifier.soniqClickable(shape, onClick = onSelect)
             else Modifier.clickable(onClick = onSelect)), verticalAlignment = Alignment.CenterVertically) {
-            ArtworkView(artwork, theme, if (soniq) 42.dp else 48.dp, song.id, circular = variant == "aurora")
+            ArtworkView(artwork, theme, if (soniq) 42.dp else 48.dp, song.id,
+                circular = variant == "aurora", artworkRevision = artworkRevision)
             Spacer(Modifier.width(if (soniq) 11.dp else 11.dp))
             Column(Modifier.weight(1f)) {
                 Text(song.title, color = if (selected && soniq) SoniqPalette.electricBlue else theme.foreground,
@@ -63,13 +75,13 @@ internal fun SongRowLayout(song: Song, selected: Boolean, artwork: File?, theme:
                     fontSize = if (soniq) 13.sp else 16.sp, fontWeight = FontWeight.SemiBold,
                     maxLines = 1, overflow = TextOverflow.Ellipsis)
                 Spacer(Modifier.height(if (soniq) 2.dp else 3.dp))
-                Text(song.subtitle, color = if (soniq) SoniqPalette.secondaryText else theme.muted,
+                Text(subtitle, color = if (soniq) SoniqPalette.secondaryText else theme.muted,
                     fontFamily = if (soniq) SoniqBodyFont else FontFamily.Default,
                     fontSize = if (soniq) 11.sp else 12.sp,
                     maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
             if (soniq) Spacer(Modifier.width(11.dp))
-            Text(song.displayDuration(), color = if (soniq) SoniqPalette.metaText else theme.muted,
+            Text(duration, color = if (soniq) SoniqPalette.metaText else theme.muted,
                 fontSize = if (soniq) 10.sp else 12.sp,
                 fontFamily = if (soniq) SoniqMonoFont else FontFamily.Monospace,
                 maxLines = if (soniq) 1 else Int.MAX_VALUE, softWrap = !soniq,
@@ -113,10 +125,4 @@ internal fun SongRowLayout(song: Song, selected: Boolean, artwork: File?, theme:
             }
         }
     }
-}
-
-private fun Song.displayDuration(): String {
-    val ms = durationMs ?: return "—"
-    val seconds = ms.coerceAtLeast(0) / 1000
-    return "%d:%02d".format(seconds / 60, seconds % 60)
 }

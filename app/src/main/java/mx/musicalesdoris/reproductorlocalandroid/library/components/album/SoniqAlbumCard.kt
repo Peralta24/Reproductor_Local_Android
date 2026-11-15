@@ -6,6 +6,7 @@ import mx.musicalesdoris.reproductorlocalandroid.library.AlbumSummary
 import java.io.File
 
 @Composable
-fun SoniqAlbumCard(album: AlbumSummary, artwork: File?, theme: PlayerTheme, onClick: () -> Unit) {
-    AlbumCardLayout(album, artwork, theme, onClick, soniq = true)
+fun SoniqAlbumCard(album: AlbumSummary, artwork: File?, theme: PlayerTheme,
+                   artworkRevision: Any? = null, onClick: () -> Unit) {
+    AlbumCardLayout(album, artwork, theme, artworkRevision, onClick, soniq = true)
 }

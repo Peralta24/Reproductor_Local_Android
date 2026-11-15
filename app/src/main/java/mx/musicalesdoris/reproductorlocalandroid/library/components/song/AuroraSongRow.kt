@@ -9,7 +9,7 @@ import java.io.File
 fun AuroraSongRow(song: Song, selected: Boolean, artwork: File?, theme: PlayerTheme,
                     onSelect: () -> Unit, onFavorite: () -> Unit, onDelete: () -> Unit,
                     destructiveTitle: String, onMoveUp: (() -> Unit)?, onMoveDown: (() -> Unit)?,
-                    onAddToPlaylist: (() -> Unit)? = null) {
+                    onAddToPlaylist: (() -> Unit)? = null, artworkRevision: Any? = null) {
     SongRowLayout(song, selected, artwork, theme, onSelect, onFavorite, onDelete,
-        destructiveTitle, onMoveUp, onMoveDown, "aurora", onAddToPlaylist)
+        destructiveTitle, onMoveUp, onMoveDown, "aurora", onAddToPlaylist, artworkRevision)
 }

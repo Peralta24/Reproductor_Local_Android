@@ -10,13 +10,14 @@ import java.io.File
 fun SongRow(song: Song, selected: Boolean, artwork: File?, theme: PlayerTheme,
             onSelect: () -> Unit, onFavorite: () -> Unit, onDelete: () -> Unit,
             destructiveTitle: String = "Eliminar archivo", onMoveUp: (() -> Unit)? = null,
-            onMoveDown: (() -> Unit)? = null, onAddToPlaylist: (() -> Unit)? = null) {
+            onMoveDown: (() -> Unit)? = null, onAddToPlaylist: (() -> Unit)? = null,
+            artworkRevision: Any? = null) {
     when (theme.variantFor(LibraryComponent.SONG)) {
         "soniq" -> SoniqSongRow(song, selected, artwork, theme, onSelect, onFavorite,
-            onDelete, destructiveTitle, onMoveUp, onMoveDown, onAddToPlaylist)
+            onDelete, destructiveTitle, onMoveUp, onMoveDown, onAddToPlaylist, artworkRevision)
         "aurora" -> AuroraSongRow(song, selected, artwork, theme, onSelect, onFavorite,
-            onDelete, destructiveTitle, onMoveUp, onMoveDown, onAddToPlaylist)
+            onDelete, destructiveTitle, onMoveUp, onMoveDown, onAddToPlaylist, artworkRevision)
         else -> NeonSongRow(song, selected, artwork, theme, onSelect, onFavorite,
-            onDelete, destructiveTitle, onMoveUp, onMoveDown, onAddToPlaylist)
+            onDelete, destructiveTitle, onMoveUp, onMoveDown, onAddToPlaylist, artworkRevision)
     }
 }

@@ -45,6 +45,7 @@ import mx.musicalesdoris.reproductorlocalandroid.PlayerViewModel
 import mx.musicalesdoris.reproductorlocalandroid.Playlist
 import mx.musicalesdoris.reproductorlocalandroid.Song
 import mx.musicalesdoris.reproductorlocalandroid.library.components.artwork.ArtworkView
+import mx.musicalesdoris.reproductorlocalandroid.library.components.artwork.rememberArtworkRevisionToken
 import mx.musicalesdoris.reproductorlocalandroid.ui.theme.SoniqBodyFont
 import mx.musicalesdoris.reproductorlocalandroid.ui.theme.SoniqHeadingFont
 import mx.musicalesdoris.reproductorlocalandroid.ui.theme.SoniqPalette
@@ -52,6 +53,7 @@ import mx.musicalesdoris.reproductorlocalandroid.ui.theme.SoniqPalette
 @Composable
 fun PlaylistDestinationSheet(song: Song, playlists: List<Playlist>, player: PlayerViewModel,
                              theme: PlayerTheme, onDismiss: () -> Unit, onAdded: (String) -> Unit) {
+    val artworkRevisionToken = rememberArtworkRevisionToken(song.id, player.library)
     var creating by remember { mutableStateOf(false) }
     var name by remember { mutableStateOf("") }
     var description by remember { mutableStateOf("") }
@@ -110,7 +112,8 @@ fun PlaylistDestinationSheet(song: Song, playlists: List<Playlist>, player: Play
                         fontFamily = SoniqBodyFont, fontSize = 10.sp, modifier = Modifier.padding(top = 8.dp))
                 } else {
                     Row(Modifier.fillMaxWidth().padding(top = 4.dp, bottom = 12.dp), verticalAlignment = Alignment.CenterVertically) {
-                        ArtworkView(player.library.artworkFor(song), theme, 86.dp, song.id)
+                        ArtworkView(player.library.artworkFor(song), theme, 86.dp, song.id,
+                            artworkRevision = artworkRevisionToken)
                         Spacer(Modifier.width(14.dp))
                         Column(Modifier.weight(1f)) {
                             Text("Portada de la lista", color = SoniqPalette.ink, fontFamily = SoniqBodyFont,

@@ -29,6 +29,8 @@ import mx.musicalesdoris.reproductorlocalandroid.ui.theme.SoniqMonoFont
 import mx.musicalesdoris.reproductorlocalandroid.ui.theme.SoniqPalette
 import java.text.NumberFormat
 import java.util.Locale
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
 @Composable
 fun SongsView(songs: List<Song>, state: PlayerState, player: PlayerViewModel, theme: PlayerTheme) {
@@ -36,6 +38,9 @@ fun SongsView(songs: List<Song>, state: PlayerState, player: PlayerViewModel, th
     val visible = remember(songs, query) {
         if (query.isBlank()) songs else songs.filter { it.title.contains(query, true) ||
             it.artist?.contains(query, true) == true || it.album?.contains(query, true) == true }
+    }
+    val visibleCountLabel = remember(visible.size) {
+        NumberFormat.getIntegerInstance(Locale("es", "MX")).format(visible.size)
     }
     Column(Modifier.fillMaxSize()) {
         if (theme.id == "soniq") {
@@ -46,7 +51,7 @@ fun SongsView(songs: List<Song>, state: PlayerState, player: PlayerViewModel, th
             Row(Modifier.fillMaxWidth().height(26.dp), verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
                 Text("Colección completa", color = SoniqPalette.ink, fontFamily = SoniqHeadingFont,
                     fontSize = 20.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
-                Text("${NumberFormat.getIntegerInstance(Locale("es", "MX")).format(visible.size)} canciones",
+                Text("$visibleCountLabel canciones",
                     color = SoniqPalette.electricBlue, fontFamily = SoniqBodyFont, fontSize = 11.sp,
                     fontWeight = FontWeight.Bold)
             }
@@ -59,9 +64,9 @@ fun SongsView(songs: List<Song>, state: PlayerState, player: PlayerViewModel, th
                 shape = RoundedCornerShape(10.dp))
             Spacer(Modifier.height(12.dp))
         }
-        SongCollection(visible, state, player, theme,
+        SongCollection(visible, state.selectedId, player, theme,
             emptyTitle = if (query.isEmpty()) "No hay canciones" else "No se encontraron canciones",
-            modifier = Modifier.weight(1f))
+            modifier = Modifier.weight(1f), artworkRevision = songs)
     }
 }
 
@@ -86,15 +91,21 @@ private fun SoniqSearchField(query: String, onQueryChange: (String) -> Unit) {
 @Composable
 private fun SoniqStatsCard(songs: List<Song>, player: PlayerViewModel, theme: PlayerTheme, modifier: Modifier = Modifier) {
     val context = LocalContext.current
-    val stats = remember(songs) {
-        Triple(songs.sumOf { player.library.sizeFor(it) },
-            songs.all { it.durationMs != null }, songs.sumOf { it.durationMs ?: 0L } / 60000)
+    val stats by produceState<SongLibraryStats?>(null, songs, player.library) {
+        val catalog = songs
+        value = withContext(Dispatchers.IO) {
+            calculateSongLibraryStats(catalog, player.library::sizeFor)
+        }
     }
-    val size = remember(stats.first, context) { Formatter.formatShortFileSize(context, stats.first) }
-    val known = stats.second
-    val totalMinutes = stats.third
-    val duration = if (!known) "—" else if (totalMinutes >= 60) "${totalMinutes / 60} h ${totalMinutes % 60} min"
-        else "$totalMinutes min"
+    val size = remember(stats?.totalBytes, context) {
+        stats?.let { Formatter.formatShortFileSize(context, it.totalBytes) } ?: "—"
+    }
+    val duration = remember(stats) {
+        stats?.takeIf { it.allDurationsKnown }?.let { current ->
+            val minutes = current.totalMinutes
+            if (minutes >= 60) "${minutes / 60} h ${minutes % 60} min" else "$minutes min"
+        } ?: "—"
+    }
     val shape = RoundedCornerShape(18.dp)
     Column(modifier.fillMaxWidth().height(96.dp).background(SoniqPalette.librarySurface, shape)
         .border(2.dp, SoniqPalette.libraryBorder, shape).padding(horizontal = 15.dp, vertical = 10.dp)) {
@@ -134,3 +145,12 @@ private fun SoniqStatsCard(songs: List<Song>, player: PlayerViewModel, theme: Pl
         }
     }
 }
+
+internal data class SongLibraryStats(val totalBytes: Long, val allDurationsKnown: Boolean, val totalMinutes: Long)
+
+internal fun calculateSongLibraryStats(songs: List<Song>, sizeFor: (Song) -> Long): SongLibraryStats =
+    SongLibraryStats(
+        totalBytes = songs.sumOf(sizeFor),
+        allDurationsKnown = songs.all { it.durationMs != null },
+        totalMinutes = songs.sumOf { it.durationMs ?: 0L } / 60000
+    )

@@ -26,6 +26,7 @@ import mx.musicalesdoris.reproductorlocalandroid.PlayerTheme
 import mx.musicalesdoris.reproductorlocalandroid.PlayerViewModel
 import mx.musicalesdoris.reproductorlocalandroid.Song
 import mx.musicalesdoris.reproductorlocalandroid.library.components.artwork.ArtworkView
+import mx.musicalesdoris.reproductorlocalandroid.library.components.artwork.rememberArtworkRevisionToken
 import mx.musicalesdoris.reproductorlocalandroid.ui.theme.SoniqBodyFont
 import mx.musicalesdoris.reproductorlocalandroid.ui.theme.SoniqHeadingFont
 import mx.musicalesdoris.reproductorlocalandroid.ui.theme.SoniqMonoFont
@@ -47,7 +48,8 @@ fun FavoritesView(songs: List<Song>, state: PlayerState, player: PlayerViewModel
         songs.filter { it.favorite }.sortedBy { it.favoritedAt ?: it.importedAt }
             .let { if (newestFirst) it.reversed() else it }
     }
-    SongCollection(favorites, state, player, theme, "Aún no tienes favoritos", headerContent = {
+    val artworkRevisionToken = rememberArtworkRevisionToken(songs, player.library)
+    SongCollection(favorites, state.selectedId, player, theme, "Aún no tienes favoritos", headerContent = {
         Column(Modifier.fillMaxWidth()) {
         if (theme.id == "soniq") {
             Column(Modifier.fillMaxWidth().padding(top = 14.dp, bottom = 14.dp), horizontalAlignment = Alignment.CenterHorizontally) {
@@ -57,7 +59,8 @@ fun FavoritesView(songs: List<Song>, state: PlayerState, player: PlayerViewModel
                     onLongClick = { coverMenuExpanded = true },
                     onLongClickLabel = "Cambiar portada de Favoritos"
                 )) {
-                    ArtworkView(favoriteArtwork ?: automaticArtwork, theme, 172.dp, "soniq-favorites")
+                    ArtworkView(favoriteArtwork ?: automaticArtwork, theme, 172.dp, "soniq-favorites",
+                        artworkRevision = artworkRevisionToken)
                     DropdownMenu(
                         expanded = coverMenuExpanded,
                         onDismissRequest = { coverMenuExpanded = false },
@@ -107,7 +110,7 @@ fun FavoritesView(songs: List<Song>, state: PlayerState, player: PlayerViewModel
                 modifier = Modifier.padding(top = 18.dp, bottom = 16.dp))
         }
         }
-    })
+    }, artworkRevision = artworkRevisionToken)
 }
 
 @Composable
